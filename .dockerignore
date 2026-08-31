@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+.env
+static/paginas/
+**/.ocr_cache/
+.git/
+.gitignore
+

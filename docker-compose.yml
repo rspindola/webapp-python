@@ -1,0 +1,19 @@
+version: "3.9"
+services:
+  extrator-pdf:
+    build: .
+    restart: always
+    ports:
+      - "${APP_PORT:-80}:5000"
+    volumes:
+      # Drives do servidor Windows montados com o mesmo caminho dentro do container.
+      # Assim o usuario digita C:\dados\PDFs normalmente — o app traduz automaticamente
+      # para /mnt/c/dados/PDFs, que e onde o Docker monta o disco C:.
+      - "C:/:/mnt/c"
+      - "D:/:/mnt/d"
+      # Se houver outros discos ou letras de rede mapeadas, adicione aqui:
+      # - "E:/:/mnt/e"
+      # - "Z:/:/mnt/z"
+    environment:
+      - FLASK_ENV=production
+

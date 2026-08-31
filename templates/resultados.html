@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block titulo %}Resultados{% endblock %}
+{% block conteudo %}
+<h1>Resultados para "{{ chave }}"</h1>
+<p>{{ resultados|length }} ocorrência(s) encontrada(s). Escolha a correta para revisar e extrair:</p>
+
+{% for r in resultados %}
+<div class="cartao">
+  <h2>{{ r.pdf_nome }} — página {{ r.inicio + 1 }} de {{ r.total_paginas }}</h2>
+  <p class="trecho">"{{ r.trecho }}..."</p>
+  <a class="botao" href="{{ url_for('revisar', busca_id=busca_id, indice=loop.index0) }}">Revisar e extrair →</a>
+</div>
+{% endfor %}
+
+<a class="botao secundario" href="{{ url_for('index') }}">← Nova busca</a>
+{% endblock %}

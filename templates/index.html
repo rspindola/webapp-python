@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block titulo %}Buscar{% endblock %}
+{% block conteudo %}
+<h1>📄 Extrator de sub-PDFs por palavra-chave</h1>
+<div class="cartao">
+  <form method="post" action="{{ url_for('buscar') }}">
+    <label>Pasta de entrada (onde estão os PDFs grandes, no servidor)</label>
+    <input type="text" name="pasta_entrada" placeholder="\\192.168.0.x\Cgeral\PDFs ou /mnt/dados/pdfs" required>
+
+    <label>Pasta de saída (onde salvar o PDF extraído)</label>
+    <input type="text" name="pasta_saida" placeholder="\\192.168.0.x\Cgeral\Extraidos ou /mnt/dados/saida" required>
+
+    <label>Palavra-chave a buscar</label>
+    <input type="text" name="chave" placeholder='Ex: fluxo de trabalho 2008' required>
+
+    <button type="submit">Buscar</button>
+  </form>
+</div>
+<p style="color:#64748b; font-size:13px;">
+  Na primeira busca em cada PDF grande, o sistema faz OCR de todas as páginas escaneadas
+  (pode demorar alguns minutos, dependendo do tamanho). Buscas seguintes no mesmo arquivo
+  são quase instantâneas, porque o texto fica em cache numa pasta <code>.ocr_cache</code>
+  dentro da pasta de entrada.
+</p>
+{% endblock %}

@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block titulo %}Revisar{% endblock %}
+{% block conteudo %}
+<h1>Revisar intervalo — {{ pdf_nome }}</h1>
+<p>Confira abaixo se a página inicial é a capa certa e se a última página incluída ainda faz
+parte do mesmo documento. Ajuste os números se precisar e clique em "Atualizar prévia".</p>
+
+<form method="get" action="{{ url_for('revisar', busca_id=busca_id, indice=indice) }}">
+  <div class="colunas">
+    <div class="coluna">
+      <label>Página inicial</label>
+      <div class="controles">
+        <input type="number" name="inicio" min="1" max="{{ total_paginas }}" value="{{ inicio }}">
+      </div>
+    </div>
+    <div class="coluna">
+      <label>Última página incluída</label>
+      <div class="controles">
+        <input type="number" name="fim" min="{{ inicio }}" max="{{ total_paginas }}" value="{{ fim }}">
+      </div>
+    </div>
+  </div>
+  <button type="submit" class="secundario">Atualizar prévia</button>
+</form>
+
+<div class="colunas" style="margin-top:24px;">
+  <div class="coluna paginas">
+    <h2>Página {{ inicio }} (início ✅)</h2>
+    <img src="{{ url_for('pagina_png', busca_id=busca_id, indice=indice, pagina=inicio) }}">
+  </div>
+  <div class="coluna paginas">
+    <h2>Página {{ fim }} (última incluída ✅)</h2>
+    <img src="{{ url_for('pagina_png', busca_id=busca_id, indice=indice, pagina=fim) }}">
+  </div>
+  {% if fim < total_paginas %}
+  <div class="coluna paginas">
+    <h2>Página {{ fim + 1 }} (próximo doc, NÃO incluída)</h2>
+    <img src="{{ url_for('pagina_png', busca_id=busca_id, indice=indice, pagina=fim + 1) }}">
+  </div>
+  {% endif %}
+</div>
+
+<div class="cartao" style="margin-top:24px;">
+  <p><strong>{{ n_paginas }}</strong> página(s) serão extraídas ({{ inicio }} a {{ fim }}) para um novo PDF.</p>
+  <form method="post" action="{{ url_for('confirmar', busca_id=busca_id, indice=indice) }}">
+    <input type="hidden" name="inicio" value="{{ inicio }}">
+    <input type="hidden" name="fim" value="{{ fim }}">
+    <button type="submit">✅ Confirmar e salvar PDF</button>
+  </form>
+</div>
+
+<a class="botao secundario" href="{{ url_for('resultados', busca_id=busca_id) }}">← Voltar aos resultados</a>
+{% endblock %}

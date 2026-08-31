@@ -1,0 +1,155 @@
+﻿import io
+import uuid
+from pathlib import Path
+
+from flask import Flask, request, render_template, redirect, url_for, send_file, flash
+
+import nucleo
+
+app = Flask(__name__)
+app.secret_key = "troque-esta-chave-em-producao"
+
+# Guarda o estado das buscas em memoria (app local, single-user; se
+# preferir persistencia entre reinicializacoes, troque por JSON ou sqlite).
+BUSCAS = {}
+
+# Pasta temporaria onde renderizamos as miniaturas das paginas para previa
+CACHE_IMG = Path(__file__).parent / "static" / "paginas"
+CACHE_IMG.mkdir(parents=True, exist_ok=True)
+
+
+@app.route("/", methods=["GET"])
+def index():
+    return render_template("index.html")
+
+
+@app.route("/buscar", methods=["POST"])
+def buscar():
+    # normalizar_caminho converte C:\dados -> /mnt/c/dados para funcionar no container
+    pasta_entrada = Path(nucleo.normalizar_caminho(request.form["pasta_entrada"].strip()))
+    pasta_saida   = Path(nucleo.normalizar_caminho(request.form["pasta_saida"].strip()))
+    chave = request.form["chave"].strip()
+
+    if not pasta_entrada.is_dir():
+        flash(f"Pasta de entrada nao encontrada: {pasta_entrada}")
+        return redirect(url_for("index"))
+    if not chave:
+        flash("Digite uma palavra-chave para buscar.")
+        return redirect(url_for("index"))
+
+    cache_dir = pasta_entrada / ".ocr_cache"
+    pdfs = sorted(pasta_entrada.glob("*.pdf"))
+    if not pdfs:
+        flash(f"Nenhum PDF encontrado em {pasta_entrada}")
+        return redirect(url_for("index"))
+
+    resultados = []
+    for pdf_path in pdfs:
+        try:
+            textos = nucleo.extrair_texto_paginas(pdf_path, cache_dir)
+        except RuntimeError as e:
+            flash(f"{pdf_path.name}: {e}")
+            continue
+        ocorrencias = nucleo.buscar_ocorrencias(textos, chave)
+        for i in ocorrencias:
+            fim_sugerido = nucleo.sugerir_fim(textos, i, chave)
+            resultados.append({
+                "pdf": str(pdf_path),
+                "pdf_nome": pdf_path.name,
+                "inicio": i,
+                "fim_sugerido": fim_sugerido,
+                "total_paginas": len(textos),
+                "trecho": textos[i].strip().replace("\n", " ")[:180],
+            })
+
+    if not resultados:
+        flash(f"Nenhuma ocorrencia de \"{chave}\" encontrada nos PDFs de {pasta_entrada}.")
+        return redirect(url_for("index"))
+
+    busca_id = uuid.uuid4().hex[:10]
+    BUSCAS[busca_id] = {
+        "chave": chave,
+        "pasta_saida": str(pasta_saida),
+        "resultados": resultados,
+    }
+    return redirect(url_for("resultados", busca_id=busca_id))
+
+
+@app.route("/resultados/<busca_id>")
+def resultados(busca_id):
+    busca = BUSCAS.get(busca_id)
+    if not busca:
+        flash("Busca expirada, faca a busca novamente.")
+        return redirect(url_for("index"))
+    return render_template("resultados.html", busca_id=busca_id, chave=busca["chave"],
+                            resultados=busca["resultados"])
+
+
+@app.route("/revisar/<busca_id>/<int:indice>")
+def revisar(busca_id, indice):
+    busca = BUSCAS.get(busca_id)
+    if not busca:
+        flash("Busca expirada, faca a busca novamente.")
+        return redirect(url_for("index"))
+
+    r = busca["resultados"][indice]
+    # inicio/fim ajustaveis via querystring (1-based na interface)
+    inicio = int(request.args.get("inicio", r["inicio"] + 1))
+    fim = int(request.args.get("fim", r["fim_sugerido"]))
+    inicio = max(1, min(inicio, r["total_paginas"]))
+    fim = max(inicio, min(fim, r["total_paginas"]))
+
+    return render_template(
+        "revisar.html",
+        busca_id=busca_id, indice=indice, chave=busca["chave"],
+        pdf_nome=r["pdf_nome"], total_paginas=r["total_paginas"],
+        inicio=inicio, fim=fim,
+        n_paginas=fim - inicio + 1,
+    )
+
+
+@app.route("/pagina/<busca_id>/<int:indice>/<int:pagina>.png")
+def pagina_png(busca_id, indice, pagina):
+    """Renderiza (com cache) a pagina `pagina` (1-based) do PDF do resultado como PNG,
+    para exibir como previa na tela de revisao."""
+    busca = BUSCAS.get(busca_id)
+    if not busca:
+        return "busca expirada", 404
+    r = busca["resultados"][indice]
+    # normalizar_caminho garante que o caminho funciona dentro do container
+    pdf_path = Path(nucleo.normalizar_caminho(r["pdf"]))
+
+    cache_file = CACHE_IMG / f"{pdf_path.stem}_{pagina}.png"
+    if not cache_file.exists():
+        from pdf2image import convert_from_path
+        imgs = convert_from_path(str(pdf_path), dpi=110, first_page=pagina, last_page=pagina)
+        imgs[0].save(cache_file, "PNG")
+
+    return send_file(cache_file, mimetype="image/png")
+
+
+@app.route("/confirmar/<busca_id>/<int:indice>", methods=["POST"])
+def confirmar(busca_id, indice):
+    busca = BUSCAS.get(busca_id)
+    if not busca:
+        flash("Busca expirada, faca a busca novamente.")
+        return redirect(url_for("index"))
+
+    r = busca["resultados"][indice]
+    inicio_1based = int(request.form["inicio"])
+    fim_1based = int(request.form["fim"])  # ultima pagina incluida, 1-based
+
+    pdf_path = Path(nucleo.normalizar_caminho(r["pdf"]))
+    pasta_saida = Path(nucleo.normalizar_caminho(busca["pasta_saida"]))
+    nome = nucleo.nome_arquivo_saida(busca["chave"], inicio_1based - 1, fim_1based)
+    saida_path = pasta_saida / nome
+
+    nucleo.extrair_sub_pdf(pdf_path, inicio_1based - 1, fim_1based, saida_path)
+
+    return render_template("sucesso.html", caminho=str(saida_path.resolve()),
+                            n_paginas=fim_1based - inicio_1based + 1)
+
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000)
+
