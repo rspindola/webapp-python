@@ -1,4 +1,6 @@
 ﻿import io
+import os
+import time
 import uuid
 from pathlib import Path
 
@@ -7,7 +9,10 @@ from flask import Flask, request, render_template, redirect, url_for, send_file,
 import nucleo
 
 app = Flask(__name__)
-app.secret_key = "troque-esta-chave-em-producao"
+# Em producao, defina SECRET_KEY no .env (qualquer string aleatoria longa).
+# Sem isso os flash messages (avisos) usam uma chave previsivel - baixo risco
+# aqui pois nao guardamos dados sensiveis na sessao, mas e boa pratica.
+app.secret_key = os.environ.get("SECRET_KEY", "troque-esta-chave-em-producao")
 
 # Guarda o estado das buscas em memoria (app local, single-user; se
 # preferir persistencia entre reinicializacoes, troque por JSON ou sqlite).
@@ -25,10 +30,21 @@ def index():
 
 @app.route("/buscar", methods=["POST"])
 def buscar():
-    # normalizar_caminho converte C:\dados -> /mnt/c/dados para funcionar no container
-    pasta_entrada = Path(nucleo.normalizar_caminho(request.form["pasta_entrada"].strip()))
-    pasta_saida   = Path(nucleo.normalizar_caminho(request.form["pasta_saida"].strip()))
+    nucleo.limpar_buscas_antigas(BUSCAS)
+
     chave = request.form["chave"].strip()
+    entrada_bruta = request.form["pasta_entrada"].strip()
+    saida_bruta = request.form["pasta_saida"].strip()
+
+    # valida que os caminhos digitados estao dentro do que o administrador
+    # autorizou (DATA_ROOTS no .env) - impede acessar pastas fora do escopo
+    # combinado com a empresa, mesmo que o container tenha o disco inteiro montado.
+    try:
+        pasta_entrada = nucleo.validar_caminho(entrada_bruta)
+        pasta_saida = nucleo.validar_caminho(saida_bruta)
+    except nucleo.CaminhoNaoPermitido as e:
+        flash(str(e))
+        return redirect(url_for("index"))
 
     if not pasta_entrada.is_dir():
         flash(f"Pasta de entrada nao encontrada: {pasta_entrada}")
@@ -71,6 +87,7 @@ def buscar():
         "chave": chave,
         "pasta_saida": str(pasta_saida),
         "resultados": resultados,
+        "criada_em": time.time(),
     }
     return redirect(url_for("resultados", busca_id=busca_id))
 
@@ -119,7 +136,10 @@ def pagina_png(busca_id, indice, pagina):
     # normalizar_caminho garante que o caminho funciona dentro do container
     pdf_path = Path(nucleo.normalizar_caminho(r["pdf"]))
 
-    cache_file = CACHE_IMG / f"{pdf_path.stem}_{pagina}.png"
+    # chave de cache pelo caminho completo (nao so o nome do arquivo) - evita
+    # mostrar a miniatura de um PDF errado quando dois arquivos em pastas
+    # diferentes tem o mesmo nome (comum nesses lotes numerados)
+    cache_file = CACHE_IMG / nucleo.chave_cache_imagem(pdf_path, pagina)
     if not cache_file.exists():
         from pdf2image import convert_from_path
         imgs = convert_from_path(str(pdf_path), dpi=110, first_page=pagina, last_page=pagina)
@@ -151,5 +171,9 @@ def confirmar(busca_id, indice):
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    # Uso apenas para desenvolvimento local (fora do Docker). Em producao o
+    # Dockerfile chama o gunicorn diretamente (veja CMD no Dockerfile) -
+    # o servidor embutido do Flask nao foi feito pra atender varios usuarios
+    # ao mesmo tempo.
+    app.run(host="0.0.0.0", port=5000, threaded=True)
 
