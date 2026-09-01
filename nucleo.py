@@ -30,24 +30,29 @@ except ImportError:
 # --------------------------------------------------------------------------
 
 def normalizar_caminho(caminho_str: str) -> str:
-    """Converte caminhos Windows para caminhos acessiveis dentro do container.
+    """Converte caminhos Windows para caminhos acessiveis dentro do container,
+    QUANDO estiver rodando dentro do container Linux (Docker).
 
     O Docker Desktop no Windows monta os drives assim:
         C:\\dados\\PDFs  ->  /mnt/c/dados/PDFs
         D:\\arq         ->  /mnt/d/arq
 
-    Se o caminho ja for Linux (comeca com /), e retornado sem alteracao.
-    Caminhos UNC (\\\\servidor\\pasta) precisam ser mapeados como letra
-    de drive no Windows antes de usar o sistema.
+    Se o processo estiver rodando NATIVAMENTE no Windows (sem Docker, ex:
+    `python app.py` direto pra um teste rapido numa unica maquina), o
+    caminho C:\\dados\\PDFs ja funciona do jeito que esta - nao precisa (e
+    nao deve) ser traduzido, senao o Windows nao acha a pasta /mnt/c/...
     """
     caminho_str = caminho_str.strip()
-    # Caminho com letra de drive: C:\dados ou C:/dados
+    if os.name == "nt":
+        # rodando direto no Windows (fora do Docker) - nao traduz
+        return caminho_str
+
+    # rodando dentro do container Linux - traduz letra de drive -> /mnt/<letra>
     m = re.match(r"^([A-Za-z]):[/\\](.*)$", caminho_str)
     if m:
         drive = m.group(1).lower()
         resto = m.group(2).replace("\\", "/")
         return f"/mnt/{drive}/{resto}".rstrip("/")
-    # Ja e caminho Linux ou relativo: normaliza apenas separadores
     return caminho_str.replace("\\", "/")
 
 
@@ -132,57 +137,77 @@ def padrao_generico(chave: str, folga: int = 20):
 
 
 # --------------------------------------------------------------------------
-# Extracao de texto (com OCR) e cache em disco
+# Extracao de texto (com OCR) e cache incremental em disco
 # --------------------------------------------------------------------------
+#
+# O cache guarda o texto de cada pagina em um JSON (lista, mesmo tamanho que
+# o numero de paginas). Paginas ainda nao OCR-adas ficam como null. Isso
+# permite PARAR de processar um arquivo assim que o documento procurado for
+# encontrado, sem precisar OCR-ar o restante do PDF (que pode ter centenas
+# de paginas depois do trecho que interessa) - e retomar de onde parou numa
+# busca futura, sem refazer OCR das paginas ja lidas.
 
 def _cache_path(pdf_path: Path, cache_dir: Path) -> Path:
     return cache_dir / (pdf_path.stem + ".json")
 
 
-def extrair_texto_paginas(pdf_path: Path, cache_dir: Path, dpi: int = 150,
-                           lang: str = "por", progresso=None):
-    """Retorna lista de strings (texto de cada pagina). Usa cache em disco:
-    a segunda busca no mesmo arquivo e praticamente instantanea.
-
-    Protegido por lock: se dois usuarios buscarem no mesmo PDF ainda-nao-
-    cacheado ao mesmo tempo, o segundo espera o primeiro terminar o OCR em
-    vez de refazer o trabalho (e corromper o arquivo de cache com escritas
-    concorrentes)."""
+def _carregar_ou_iniciar_cache(pdf_path: Path, cache_dir: Path):
+    """Retorna (textos, total_paginas). `textos` e uma lista com o texto de
+    cada pagina, ou None nas posicoes ainda nao processadas (nem texto
+    nativo nem OCR)."""
     cache_dir.mkdir(exist_ok=True, parents=True)
     cache_file = _cache_path(pdf_path, cache_dir)
 
+    if cache_file.exists():
+        textos = json.loads(cache_file.read_text(encoding="utf-8"))
+        return textos, len(textos)
+
+    reader = PdfReader(str(pdf_path))
+    total = len(reader.pages)
+    textos = []
+    for page in reader.pages:
+        # extrair texto nativo e' rapido (nao precisa de OCR/imagem), entao
+        # fazemos isso pra todas as paginas de uma vez. So fica None quando
+        # a pagina realmente precisa de OCR (PDF escaneado).
+        t = page.extract_text() or ""
+        textos.append(t if len(t.strip()) >= 15 else None)
+    return textos, total
+
+
+def _persistir_cache(pdf_path: Path, cache_dir: Path, textos):
+    cache_file = _cache_path(pdf_path, cache_dir)
+    tmp = cache_file.with_suffix(".tmp")
+    tmp.write_text(json.dumps(textos, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(cache_file)
+
+
+def _garantir_pagina_ocr(pdf_path: Path, textos: list, indice: int,
+                          dpi: int = 150, lang: str = "por"):
+    """OCR-a a pagina `indice` se ainda nao tiver texto (in-place em `textos`)."""
+    if textos[indice] is not None:
+        return
+    if not OCR_DISPONIVEL:
+        raise RuntimeError(
+            "Este PDF e escaneado (sem texto) mas pytesseract/pdf2image nao "
+            "estao instalados. Veja o README para instalar o Tesseract."
+        )
+    imgs = convert_from_path(str(pdf_path), dpi=dpi, first_page=indice + 1, last_page=indice + 1)
+    textos[indice] = pytesseract.image_to_string(imgs[0], lang=lang)
+
+
+def extrair_texto_paginas(pdf_path: Path, cache_dir: Path, dpi: int = 150, lang: str = "por"):
+    """Forca o OCR/leitura de TODAS as paginas e retorna a lista completa de
+    textos. Mantido para compatibilidade/uso pontual - a busca normal usa
+    `buscar_no_pdf`, que e' mais rapida por parar assim que acha o documento."""
     with lock_para(pdf_path):
-        if cache_file.exists():
-            return json.loads(cache_file.read_text(encoding="utf-8"))
-
-        reader = PdfReader(str(pdf_path))
-        total = len(reader.pages)
-        textos = []
-        paginas_sem_texto = []
-
-        for i, page in enumerate(reader.pages):
-            t = page.extract_text() or ""
-            textos.append(t)
-            if len(t.strip()) < 15:
-                paginas_sem_texto.append(i)
-
-        if paginas_sem_texto:
-            if not OCR_DISPONIVEL:
-                raise RuntimeError(
-                    "Este PDF e escaneado (sem texto) mas pytesseract/pdf2image nao "
-                    "estao instalados. Veja o README para instalar o Tesseract."
-                )
-            for n, i in enumerate(paginas_sem_texto):
-                if progresso:
-                    progresso(n + 1, len(paginas_sem_texto), total)
-                imgs = convert_from_path(str(pdf_path), dpi=dpi, first_page=i + 1, last_page=i + 1)
-                textos[i] = pytesseract.image_to_string(imgs[0], lang=lang)
-
-        # escreve em arquivo temporario + rename atomico (evita cache
-        # corrompido se o processo for encerrado no meio da escrita)
-        tmp = cache_file.with_suffix(".tmp")
-        tmp.write_text(json.dumps(textos, ensure_ascii=False), encoding="utf-8")
-        tmp.replace(cache_file)
+        textos, total = _carregar_ou_iniciar_cache(pdf_path, cache_dir)
+        mudou = False
+        for i in range(total):
+            if textos[i] is None:
+                _garantir_pagina_ocr(pdf_path, textos, i, dpi=dpi, lang=lang)
+                mudou = True
+        if mudou:
+            _persistir_cache(pdf_path, cache_dir, textos)
         return textos
 
 
@@ -196,32 +221,61 @@ def chave_cache_imagem(pdf_path: Path, pagina: int) -> str:
     return f"{h}_{pagina}.png"
 
 
-def cache_pronto(pdf_path: Path, cache_dir: Path) -> bool:
-    return _cache_path(pdf_path, cache_dir).exists()
-
-
 # --------------------------------------------------------------------------
-# Busca de inicio / fim do sub-documento
+# Busca de inicio / fim do sub-documento (com parada antecipada)
 # --------------------------------------------------------------------------
 
-def buscar_ocorrencias(textos, chave: str):
-    """Retorna lista de indices (0-based) de paginas cujo texto contem a chave."""
+def buscar_no_pdf(pdf_path: Path, cache_dir: Path, chave: str,
+                   dpi: int = 150, lang: str = "por", limite_chars_capa: int = 320):
+    """Busca a chave neste PDF, OCR-ando pagina por pagina (com cache
+    incremental) e PARANDO assim que:
+      1) achar a pagina inicial (capa que bate com a chave), e depois
+      2) achar a proxima capa do mesmo tipo (fim do documento) ou chegar
+         ao fim do arquivo.
+
+    Isso evita OCR-ar o resto do PDF quando o documento procurado esta no
+    comeco de um arquivo com centenas de paginas. Retorna um dict com o
+    resultado, ou None se a chave nao foi encontrada neste arquivo (nesse
+    caso, o arquivo inteiro tera sido OCR-ado e cacheado, entao a proxima
+    busca nele - com essa ou outra chave - sera instantanea)."""
     pad = padrao_busca(chave)
-    return [i for i, t in enumerate(textos) if pad.search(normalizar(t))]
+    pad_generico = padrao_generico(chave)
 
+    with lock_para(pdf_path):
+        textos, total = _carregar_ou_iniciar_cache(pdf_path, cache_dir)
+        mudou = False
+        inicio = None
+        fim = None
 
-def sugerir_fim(textos, inicio: int, chave: str, max_paginas=None, limite_chars_capa: int = 320):
-    """Sugere a pagina (exclusiva) onde o proximo documento comeca, procurando a
-    proxima capa do mesmo tipo (mesmas palavras-chave, texto curto = pagina de
-    capa, nao de conteudo)."""
-    pad = padrao_generico(chave)
-    limite = len(textos) if max_paginas is None else min(len(textos), inicio + max_paginas)
-    if pad:
-        for i in range(inicio + 1, limite):
+        for i in range(total):
+            if textos[i] is None:
+                _garantir_pagina_ocr(pdf_path, textos, i, dpi=dpi, lang=lang)
+                mudou = True
+
             texto_norm = normalizar(textos[i])
-            if len(texto_norm) <= limite_chars_capa and pad.search(texto_norm):
-                return i
-    return limite
+            if inicio is None:
+                if pad.search(texto_norm):
+                    inicio = i
+            elif pad_generico and len(texto_norm) <= limite_chars_capa and pad_generico.search(texto_norm):
+                fim = i
+                break  # achou a proxima capa - documento termina aqui
+
+        if mudou:
+            _persistir_cache(pdf_path, cache_dir, textos)
+
+        if inicio is None:
+            return None
+
+        if fim is None:
+            fim = total
+
+        trecho = (textos[inicio] or "").strip().replace("\n", " ")[:180]
+        return {
+            "inicio": inicio,
+            "fim_sugerido": fim,
+            "total_paginas": total,
+            "trecho": trecho,
+        }
 
 
 # --------------------------------------------------------------------------

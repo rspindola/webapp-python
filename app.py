@@ -62,21 +62,25 @@ def buscar():
     resultados = []
     for pdf_path in pdfs:
         try:
-            textos = nucleo.extrair_texto_paginas(pdf_path, cache_dir)
+            r = nucleo.buscar_no_pdf(pdf_path, cache_dir, chave)
         except RuntimeError as e:
             flash(f"{pdf_path.name}: {e}")
             continue
-        ocorrencias = nucleo.buscar_ocorrencias(textos, chave)
-        for i in ocorrencias:
-            fim_sugerido = nucleo.sugerir_fim(textos, i, chave)
-            resultados.append({
-                "pdf": str(pdf_path),
-                "pdf_nome": pdf_path.name,
-                "inicio": i,
-                "fim_sugerido": fim_sugerido,
-                "total_paginas": len(textos),
-                "trecho": textos[i].strip().replace("\n", " ")[:180],
-            })
+        if r is None:
+            continue  # chave nao encontrada neste arquivo, tenta o proximo
+        resultados.append({
+            "pdf": str(pdf_path),
+            "pdf_nome": pdf_path.name,
+            "inicio": r["inicio"],
+            "fim_sugerido": r["fim_sugerido"],
+            "total_paginas": r["total_paginas"],
+            "trecho": r["trecho"],
+        })
+        # para de varrer a pasta assim que achar o documento em algum arquivo -
+        # evita rodar OCR nos demais PDFs (podem ser centenas) sem necessidade.
+        # Se a mesma chave puder aparecer em mais de um arquivo na sua pasta,
+        # remova este 'break' para listar todas as ocorrencias (mais lento).
+        break
 
     if not resultados:
         flash(f"Nenhuma ocorrencia de \"{chave}\" encontrada nos PDFs de {pasta_entrada}.")

@@ -3,7 +3,7 @@
 {% block conteudo %}
 <h1>📄 Extrator de sub-PDFs por palavra-chave</h1>
 <div class="cartao">
-  <form method="post" action="{{ url_for('buscar') }}">
+  <form method="post" action="{{ url_for('buscar') }}" onsubmit="iniciarBusca(this)">
     <label>Pasta de entrada (onde estão os PDFs grandes, no servidor)</label>
     <input type="text" name="pasta_entrada" placeholder="\\192.168.0.x\Cgeral\PDFs ou /mnt/dados/pdfs" required>
 
@@ -13,13 +13,25 @@
     <label>Palavra-chave a buscar</label>
     <input type="text" name="chave" placeholder='Ex: fluxo de trabalho 2008' required>
 
-    <button type="submit">Buscar</button>
+    <button type="submit" id="botao-buscar">Buscar</button>
+    <p id="aviso-processando" style="display:none; margin-top:14px; color:#334155; font-size:14px;">
+      ⏳ Processando... isso pode levar de alguns segundos a vários minutos, dependendo
+      do tamanho dos PDFs e se é a primeira busca nessa pasta (faz OCR). Não feche
+      esta aba nem a janela do servidor.
+    </p>
   </form>
 </div>
 <p style="color:#64748b; font-size:13px;">
-  Na primeira busca em cada PDF grande, o sistema faz OCR de todas as páginas escaneadas
-  (pode demorar alguns minutos, dependendo do tamanho). Buscas seguintes no mesmo arquivo
-  são quase instantâneas, porque o texto fica em cache numa pasta <code>.ocr_cache</code>
-  dentro da pasta de entrada.
+  Na primeira busca em cada PDF grande, o sistema faz OCR das páginas escaneadas
+  (pode demorar). Buscas seguintes no mesmo arquivo são quase instantâneas, porque o
+  texto fica em cache numa pasta <code>.ocr_cache</code> dentro da pasta de entrada.
 </p>
+<script>
+function iniciarBusca(form) {
+  document.getElementById('botao-buscar').disabled = true;
+  document.getElementById('botao-buscar').textContent = 'Processando...';
+  document.getElementById('aviso-processando').style.display = 'block';
+  return true; // deixa o formulario enviar normalmente
+}
+</script>
 {% endblock %}
