@@ -1,4 +1,5 @@
-flask
-pypdf
-pdf2image
-pytesseract
+flask==3.0.*
+gunicorn==23.0.*
+pypdf==5.*
+pdf2image==1.17.*
+pytesseract==0.3.*

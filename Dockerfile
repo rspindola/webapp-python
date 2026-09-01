@@ -20,5 +20,10 @@ COPY . .
 # Porta exposta
 EXPOSE 5000
 
-# Comando de inicializacao
-CMD ["python", "app.py"]
+# Comando de inicializacao — gunicorn (servidor de producao), NAO o servidor
+# de desenvolvimento do Flask. 1 worker + varias threads: como o estado das
+# buscas fica em memoria (dict BUSCAS em app.py), precisa ser 1 processo so
+# para todos os usuarios compartilharem o mesmo estado. As threads dao conta
+# de atender ~10 usuarios simultaneos; o OCR (subprocess do Tesseract) libera
+# o GIL do Python enquanto roda, entao nao trava as outras threads.
+CMD ["gunicorn", "-w", "1", "--threads", "8", "--timeout", "600", "-b", "0.0.0.0:5000", "app:app"]
