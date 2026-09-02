@@ -1,0 +1,26 @@
+# Compose para RODAR/TESTAR LOCALMENTE no Mac (ou Linux), separado do
+# docker-compose.yml principal (que é o usado no servidor Windows da
+# empresa). Não precisa mexer no outro arquivo pra testar aqui.
+#
+# Uso:
+#   docker compose -f docker-compose.mac.yml up -d --build
+#
+# Pra parar:
+#   docker compose -f docker-compose.mac.yml down
+
+services:
+  extrator-pdf:
+    build: .
+    ports:
+      - "${APP_PORT:-8080}:5000"
+    volumes:
+      # Aponte para as pastas REAIS no seu Mac onde você baixou a amostra
+      # de PDFs para testar. O lado esquerdo (antes do :) é o caminho no
+      # seu Mac; o lado direito é como ele aparece DENTRO do container -
+      # é esse caminho da direita que você digita no formulário do app.
+      - "${ENTRADA_HOST:-./dados/entrada}:/dados/entrada"
+      - "${SAIDA_HOST:-./dados/saida}:/dados/saida"
+    environment:
+      - SECRET_KEY=${SECRET_KEY:-teste123}
+      # Caminho DENTRO do container (bate com os volumes acima)
+      - DATA_ROOTS=/dados

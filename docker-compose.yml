@@ -6,6 +6,7 @@ services:
     ports:
       - "${APP_PORT:-80}:5000"
     volumes:
+      # ==== WINDOWS (servidor da empresa) ====
       # RECOMENDADO: monte só as pastas de dados que o sistema realmente
       # precisa usar, não o disco inteiro. Exemplo (descomente e ajuste):
       #   - "C:/dados/PDFs:/mnt/c/dados/PDFs"
@@ -19,6 +20,13 @@ services:
       # Se houver outros discos ou letras de rede mapeadas, adicione aqui:
       # - "E:/:/mnt/e"
       # - "Z:/:/mnt/z"
+
+      # ==== MAC / LINUX (teste local) ====
+      # Comente as 2 linhas do Windows acima e descomente estas, apontando
+      # pra uma pasta real no seu computador (ex: onde voce baixou a amostra
+      # de PDFs pra testar):
+      # - "${ENTRADA_HOST:-./dados/entrada}:/dados/entrada"
+      # - "${SAIDA_HOST:-./dados/saida}:/dados/saida"
     environment:
       - FLASK_ENV=production
       - SECRET_KEY=${SECRET_KEY:-troque-esta-chave-em-producao}
@@ -29,5 +37,8 @@ services:
       # caminho fora do escopo combinado (ex: C:\Windows) por engano ou
       # má-fé. Exemplo mais restrito:
       #   DATA_ROOTS=C:\dados\PDFs;C:\dados\Extraidos
+      #
+      # No Mac/Linux (teste local), use o caminho DENTRO do container, que
+      # bate com o volume montado acima: DATA_ROOTS=/dados
       - DATA_ROOTS=${DATA_ROOTS:-C:\;D:\}
 

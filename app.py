@@ -54,7 +54,7 @@ def buscar():
         return redirect(url_for("index"))
 
     cache_dir = pasta_entrada / ".ocr_cache"
-    pdfs = sorted(pasta_entrada.glob("*.pdf"))
+    pdfs = nucleo.listar_pdfs(pasta_entrada)
     if not pdfs:
         flash(f"Nenhum PDF encontrado em {pasta_entrada}")
         return redirect(url_for("index"))

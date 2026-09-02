@@ -303,6 +303,28 @@ def limpar_buscas_antigas(buscas: dict, ttl_segundos: int = 3600):
         buscas.pop(k, None)
 
 
+def eh_pdf(caminho: Path) -> bool:
+    """Verifica se o arquivo E' um PDF pelo CONTEUDO (assinatura %PDF no
+    inicio), nao pela extensao do nome. Necessario porque, na pratica, esses
+    lotes numerados as vezes tem arquivos PDF de verdade sem a extensao
+    .pdf no nome (ex: '00000520.001' em vez de '00000520.001.pdf')."""
+    try:
+        with open(caminho, "rb") as f:
+            return f.read(5) == b"%PDF-"
+    except OSError:
+        return False
+
+
+def listar_pdfs(pasta: Path):
+    """Lista todos os PDFs de verdade dentro da pasta (por conteudo, nao so
+    pela extensao .pdf), ignorando subpastas como .ocr_cache."""
+    candidatos = sorted(
+        p for p in pasta.iterdir()
+        if p.is_file() and not p.name.startswith(".")
+    )
+    return [p for p in candidatos if eh_pdf(p)]
+
+
 def nome_arquivo_saida(chave: str, inicio: int, fim: int) -> str:
     base = re.sub(r"[^a-zA-Z0-9_-]+", "_", chave.strip()).strip("_")
     return f"{base}_pag{inicio + 1}-{fim}.pdf"
