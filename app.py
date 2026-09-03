@@ -1,10 +1,11 @@
 ﻿import io
 import os
+import threading
 import time
 import uuid
 from pathlib import Path
 
-from flask import Flask, request, render_template, redirect, url_for, send_file, flash
+from flask import Flask, request, render_template, redirect, url_for, send_file, flash, jsonify, session
 
 import nucleo
 
@@ -18,6 +19,12 @@ app.secret_key = os.environ.get("SECRET_KEY", "troque-esta-chave-em-producao")
 # preferir persistencia entre reinicializacoes, troque por JSON ou sqlite).
 BUSCAS = {}
 
+# Progresso das buscas em andamento, pra tela mostrar a barra/percentual
+# via polling (GET /progresso/<token>) enquanto o POST /buscar ainda esta
+# rodando. Chave = token gerado no navegador (um por busca).
+PROGRESSO = {}
+PROGRESSO_LOCK = threading.Lock()
+
 # Pasta temporaria onde renderizamos as miniaturas das paginas para previa
 CACHE_IMG = Path(__file__).parent / "static" / "paginas"
 CACHE_IMG.mkdir(parents=True, exist_ok=True)
@@ -25,75 +32,116 @@ CACHE_IMG.mkdir(parents=True, exist_ok=True)
 
 @app.route("/", methods=["GET"])
 def index():
-    return render_template("index.html")
+    return render_template(
+        "index.html",
+        entrada_padrao=os.environ.get("ENTRADA_PDF", ""),
+        saida_padrao=os.environ.get("SAIDA_PDF", ""),
+    )
 
 
 @app.route("/buscar", methods=["POST"])
 def buscar():
     nucleo.limpar_buscas_antigas(BUSCAS)
 
+    # Limpa qualquer aviso/erro de uma busca ANTERIOR que ainda estivesse na
+    # fila da sessao sem ter sido mostrado - evita mensagem antiga de erro
+    # continuar aparecendo depois de uma busca nova que deu certo.
+    session.pop("_flashes", None)
+
     chave = request.form["chave"].strip()
     entrada_bruta = request.form["pasta_entrada"].strip()
     saida_bruta = request.form["pasta_saida"].strip()
+    progresso_id = request.form.get("progresso_id", "").strip()
 
-    # valida que os caminhos digitados estao dentro do que o administrador
-    # autorizou (DATA_ROOTS no .env) - impede acessar pastas fora do escopo
-    # combinado com a empresa, mesmo que o container tenha o disco inteiro montado.
+    def atualizar_progresso(pdf_nome, pagina_atual, total_paginas):
+        if not progresso_id:
+            return
+        with PROGRESSO_LOCK:
+            PROGRESSO[progresso_id] = {
+                "arquivo": pdf_nome,
+                "pagina": pagina_atual,
+                "total": total_paginas,
+                "concluido": False,
+            }
+
     try:
-        pasta_entrada = nucleo.validar_caminho(entrada_bruta)
-        pasta_saida = nucleo.validar_caminho(saida_bruta)
-    except nucleo.CaminhoNaoPermitido as e:
-        flash(str(e))
-        return redirect(url_for("index"))
-
-    if not pasta_entrada.is_dir():
-        flash(f"Pasta de entrada nao encontrada: {pasta_entrada}")
-        return redirect(url_for("index"))
-    if not chave:
-        flash("Digite uma palavra-chave para buscar.")
-        return redirect(url_for("index"))
-
-    cache_dir = pasta_entrada / ".ocr_cache"
-    pdfs = nucleo.listar_pdfs(pasta_entrada)
-    if not pdfs:
-        flash(f"Nenhum PDF encontrado em {pasta_entrada}")
-        return redirect(url_for("index"))
-
-    resultados = []
-    for pdf_path in pdfs:
+        # valida que os caminhos digitados estao dentro do que o administrador
+        # autorizou (DATA_ROOTS no .env) - impede acessar pastas fora do escopo
+        # combinado com a empresa, mesmo que o container tenha o disco inteiro montado.
         try:
-            r = nucleo.buscar_no_pdf(pdf_path, cache_dir, chave)
-        except RuntimeError as e:
-            flash(f"{pdf_path.name}: {e}")
-            continue
-        if r is None:
-            continue  # chave nao encontrada neste arquivo, tenta o proximo
-        resultados.append({
-            "pdf": str(pdf_path),
-            "pdf_nome": pdf_path.name,
-            "inicio": r["inicio"],
-            "fim_sugerido": r["fim_sugerido"],
-            "total_paginas": r["total_paginas"],
-            "trecho": r["trecho"],
-        })
-        # para de varrer a pasta assim que achar o documento em algum arquivo -
-        # evita rodar OCR nos demais PDFs (podem ser centenas) sem necessidade.
-        # Se a mesma chave puder aparecer em mais de um arquivo na sua pasta,
-        # remova este 'break' para listar todas as ocorrencias (mais lento).
-        break
+            pasta_entrada = nucleo.validar_caminho(entrada_bruta)
+            pasta_saida = nucleo.validar_caminho(saida_bruta)
+        except nucleo.CaminhoNaoPermitido as e:
+            flash(str(e))
+            return redirect(url_for("index"))
 
-    if not resultados:
-        flash(f"Nenhuma ocorrencia de \"{chave}\" encontrada nos PDFs de {pasta_entrada}.")
-        return redirect(url_for("index"))
+        if not pasta_entrada.is_dir():
+            flash(f"Pasta de entrada nao encontrada: {pasta_entrada}")
+            return redirect(url_for("index"))
+        if not chave:
+            flash("Digite uma palavra-chave para buscar.")
+            return redirect(url_for("index"))
 
-    busca_id = uuid.uuid4().hex[:10]
-    BUSCAS[busca_id] = {
-        "chave": chave,
-        "pasta_saida": str(pasta_saida),
-        "resultados": resultados,
-        "criada_em": time.time(),
-    }
-    return redirect(url_for("resultados", busca_id=busca_id))
+        cache_dir = pasta_entrada / ".ocr_cache"
+        pdfs = nucleo.listar_pdfs(pasta_entrada)
+        if not pdfs:
+            flash(f"Nenhum PDF encontrado em {pasta_entrada}")
+            return redirect(url_for("index"))
+
+        resultados = []
+        for pdf_path in pdfs:
+            try:
+                r = nucleo.buscar_no_pdf(
+                    pdf_path, cache_dir, chave,
+                    progresso_callback=lambda p, t, nome=pdf_path.name: atualizar_progresso(nome, p, t),
+                )
+            except RuntimeError as e:
+                flash(f"{pdf_path.name}: {e}")
+                continue
+            if r is None:
+                continue  # chave nao encontrada neste arquivo, tenta o proximo
+            resultados.append({
+                "pdf": str(pdf_path),
+                "pdf_nome": pdf_path.name,
+                "inicio": r["inicio"],
+                "fim_sugerido": r["fim_sugerido"],
+                "total_paginas": r["total_paginas"],
+                "trecho": r["trecho"],
+            })
+            # para de varrer a pasta assim que achar o documento em algum arquivo -
+            # evita rodar OCR nos demais PDFs (podem ser centenas) sem necessidade.
+            # Se a mesma chave puder aparecer em mais de um arquivo na sua pasta,
+            # remova este 'break' para listar todas as ocorrencias (mais lento).
+            break
+
+        if not resultados:
+            flash(f"Nenhuma ocorrencia de \"{chave}\" encontrada nos PDFs de {pasta_entrada}.")
+            return redirect(url_for("index"))
+
+        busca_id = uuid.uuid4().hex[:10]
+        BUSCAS[busca_id] = {
+            "chave": chave,
+            "pasta_saida": str(pasta_saida),
+            "resultados": resultados,
+            "criada_em": time.time(),
+        }
+        return redirect(url_for("resultados", busca_id=busca_id))
+    finally:
+        # a busca terminou (com sucesso, erro ou nao encontrado) - remove o
+        # progresso da memoria, o polling do navegador para sozinho quando a
+        # pagina navegar para a redireccao.
+        if progresso_id:
+            with PROGRESSO_LOCK:
+                PROGRESSO.pop(progresso_id, None)
+
+
+@app.route("/progresso/<progresso_id>")
+def progresso(progresso_id):
+    with PROGRESSO_LOCK:
+        p = PROGRESSO.get(progresso_id)
+    if not p:
+        return jsonify({"ativo": False})
+    return jsonify({"ativo": True, **p})
 
 
 @app.route("/resultados/<busca_id>")

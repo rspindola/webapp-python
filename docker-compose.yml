@@ -41,4 +41,6 @@ services:
       # No Mac/Linux (teste local), use o caminho DENTRO do container, que
       # bate com o volume montado acima: DATA_ROOTS=/dados
       - DATA_ROOTS=${DATA_ROOTS:-C:\;D:\}
+      - ENTRADA_PDF=${ENTRADA_PDF:-}
+      - SAIDA_PDF=${SAIDA_PDF:-}
 

@@ -226,7 +226,8 @@ def chave_cache_imagem(pdf_path: Path, pagina: int) -> str:
 # --------------------------------------------------------------------------
 
 def buscar_no_pdf(pdf_path: Path, cache_dir: Path, chave: str,
-                   dpi: int = 150, lang: str = "por", limite_chars_capa: int = 320):
+                   dpi: int = 150, lang: str = "por", limite_chars_capa: int = 320,
+                   progresso_callback=None):
     """Busca a chave neste PDF, OCR-ando pagina por pagina (com cache
     incremental) e PARANDO assim que:
       1) achar a pagina inicial (capa que bate com a chave), e depois
@@ -237,7 +238,11 @@ def buscar_no_pdf(pdf_path: Path, cache_dir: Path, chave: str,
     comeco de um arquivo com centenas de paginas. Retorna um dict com o
     resultado, ou None se a chave nao foi encontrada neste arquivo (nesse
     caso, o arquivo inteiro tera sido OCR-ado e cacheado, entao a proxima
-    busca nele - com essa ou outra chave - sera instantanea)."""
+    busca nele - com essa ou outra chave - sera instantanea).
+
+    Se `progresso_callback` for informado, e' chamado apos cada pagina
+    processada como progresso_callback(pagina_atual_1based, total_paginas) -
+    usado pela tela para mostrar uma barra de progresso."""
     pad = padrao_busca(chave)
     pad_generico = padrao_generico(chave)
 
@@ -251,6 +256,9 @@ def buscar_no_pdf(pdf_path: Path, cache_dir: Path, chave: str,
             if textos[i] is None:
                 _garantir_pagina_ocr(pdf_path, textos, i, dpi=dpi, lang=lang)
                 mudou = True
+
+            if progresso_callback:
+                progresso_callback(i + 1, total)
 
             texto_norm = normalizar(textos[i])
             if inicio is None:
