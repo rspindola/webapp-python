@@ -122,16 +122,8 @@
     document.getElementById('botao-buscar').disabled = true;
     document.getElementById('overlay-processando').style.display = 'flex';
 
-    // avisa o navegador pra confirmar antes de fechar/recarregar a aba
-    window.addEventListener('beforeunload', avisarSaida);
-
     pollProgresso(token);
     return true; // deixa o formulario enviar normalmente
-  }
-
-  function avisarSaida(e) {
-    e.preventDefault();
-    e.returnValue = '';
   }
 
   function pollProgresso(token) {
