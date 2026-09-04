@@ -2,8 +2,8 @@
 {% block titulo %}Revisar{% endblock %}
 {% block conteudo %}
 <h1>Revisar intervalo — {{ pdf_nome }}</h1>
-<p>Confira abaixo se a página inicial é a capa certa e se a última página incluída ainda faz
-parte do mesmo documento. Ajuste os números se precisar e clique em "Atualizar prévia".</p>
+<p>Role o PDF abaixo pra conferir se começa e termina no lugar certo. Ajuste os números
+se precisar e clique em "Atualizar prévia" (o PDF é remontado na hora, sem OCR).</p>
 
 <form method="get" action="{{ url_for('revisar', busca_id=busca_id, indice=indice) }}">
   <div class="colunas">
@@ -20,27 +20,24 @@ parte do mesmo documento. Ajuste os números se precisar e clique em "Atualizar 
       </div>
     </div>
   </div>
-  <button type="submit" class="secundario">Atualizar prévia</button>
+  <button type="submit" class="secundario">🔄 Atualizar prévia</button>
 </form>
 
-<div class="colunas" style="margin-top:24px;">
-  <div class="coluna paginas">
-    <h2>Página {{ inicio }} (início ✅)</h2>
-    <img src="{{ url_for('pagina_png', busca_id=busca_id, indice=indice, pagina=inicio) }}">
-  </div>
-  <div class="coluna paginas">
-    <h2>Página {{ fim }} (última incluída ✅)</h2>
-    <img src="{{ url_for('pagina_png', busca_id=busca_id, indice=indice, pagina=fim) }}">
-  </div>
-  {% if fim < total_paginas %}
-  <div class="coluna paginas">
-    <h2>Página {{ fim + 1 }} (próximo doc, NÃO incluída)</h2>
-    <img src="{{ url_for('pagina_png', busca_id=busca_id, indice=indice, pagina=fim + 1) }}">
-  </div>
-  {% endif %}
+<div class="cartao" style="margin-top:22px; padding:0; overflow:hidden;">
+  <iframe
+    src="{{ url_for('previa_pdf', busca_id=busca_id, indice=indice, inicio=inicio, fim=fim) }}"
+    style="width:100%; height:75vh; border:0; display:block; background:#f1f5f9;">
+  </iframe>
 </div>
 
-<div class="cartao" style="margin-top:24px;">
+{% if fim < total_paginas %}
+<p class="trecho" style="margin-top:10px;">
+  💡 Pra conferir rapidamente se a próxima página (a {{ fim + 1 }}, que NÃO entra nesse PDF)
+  já é outro documento, <a href="{{ url_for('pagina_png', busca_id=busca_id, indice=indice, pagina=fim + 1) }}" target="_blank">clique aqui para abri-la</a>.
+</p>
+{% endif %}
+
+<div class="cartao" style="margin-top:16px;">
   <p><strong>{{ n_paginas }}</strong> página(s) serão extraídas ({{ inicio }} a {{ fim }}) para um novo PDF.</p>
   <form method="post" action="{{ url_for('confirmar', busca_id=busca_id, indice=indice) }}">
     <input type="hidden" name="inicio" value="{{ inicio }}">

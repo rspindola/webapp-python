@@ -4,6 +4,12 @@
 <h1>Resultados para "{{ chave }}"</h1>
 <p>{{ resultados|length }} ocorrência(s) encontrada(s). Escolha a correta para revisar e extrair:</p>
 
+{% if limite_atingido %}
+<div class="flash">⚠️ Mostrando as primeiras {{ resultados|length }} ocorrências — pode haver mais na
+pasta. Se souber que existem mais, tente refinar a palavra-chave (ex: incluir o mês/ano) para
+resultados mais precisos.</div>
+{% endif %}
+
 {% for r in resultados %}
 <div class="cartao">
   <h2>{{ r.pdf_nome }} — página {{ r.inicio + 1 }} de {{ r.total_paginas }}</h2>

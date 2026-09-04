@@ -7,6 +7,7 @@ quanto poderia ser usado por um script de linha de comando.
 """
 
 import hashlib
+import io
 import json
 import os
 import re
@@ -198,7 +199,7 @@ def _garantir_pagina_ocr(pdf_path: Path, textos: list, indice: int,
 def extrair_texto_paginas(pdf_path: Path, cache_dir: Path, dpi: int = 150, lang: str = "por"):
     """Forca o OCR/leitura de TODAS as paginas e retorna a lista completa de
     textos. Mantido para compatibilidade/uso pontual - a busca normal usa
-    `buscar_no_pdf`, que e' mais rapida por parar assim que acha o documento."""
+    `buscar_ocorrencias_no_pdf`, que e' mais rapida por poder parar mais cedo."""
     with lock_para(pdf_path):
         textos, total = _carregar_ou_iniciar_cache(pdf_path, cache_dir)
         mudou = False
@@ -222,37 +223,36 @@ def chave_cache_imagem(pdf_path: Path, pagina: int) -> str:
 
 
 # --------------------------------------------------------------------------
-# Busca de inicio / fim do sub-documento (com parada antecipada)
+# Busca de todas as ocorrencias (inicio/fim de cada sub-documento) no PDF
 # --------------------------------------------------------------------------
 
-def buscar_no_pdf(pdf_path: Path, cache_dir: Path, chave: str,
-                   dpi: int = 150, lang: str = "por", limite_chars_capa: int = 320,
-                   progresso_callback=None):
-    """Busca a chave neste PDF, OCR-ando pagina por pagina (com cache
-    incremental) e PARANDO assim que:
-      1) achar a pagina inicial (capa que bate com a chave), e depois
-      2) achar a proxima capa do mesmo tipo (fim do documento) ou chegar
-         ao fim do arquivo.
+def buscar_ocorrencias_no_pdf(pdf_path: Path, cache_dir: Path, chave: str,
+                               dpi: int = 150, lang: str = "por", limite_chars_capa: int = 320,
+                               progresso_callback=None, max_ocorrencias=None):
+    """Busca TODAS as ocorrencias da chave neste PDF (ex: "folha de pagamento"
+    pode aparecer em varios meses/anos dentro do mesmo arquivo mesclado),
+    OCR-ando pagina por pagina com cache incremental.
 
-    Isso evita OCR-ar o resto do PDF quando o documento procurado esta no
-    comeco de um arquivo com centenas de paginas. Retorna um dict com o
-    resultado, ou None se a chave nao foi encontrada neste arquivo (nesse
-    caso, o arquivo inteiro tera sido OCR-ado e cacheado, entao a proxima
-    busca nele - com essa ou outra chave - sera instantanea).
+    Cada ocorrencia e' um "documento" que comeca numa pagina-capa (pouco
+    texto, bate com a chave) e termina na proxima pagina-capa do mesmo tipo
+    (ou no fim do arquivo). Continua procurando ate acabar as paginas ou
+    atingir `max_ocorrencias` (protege contra escanear um arquivo enorme
+    inteiro atras de uma chave generica demais).
 
-    Se `progresso_callback` for informado, e' chamado apos cada pagina
-    processada como progresso_callback(pagina_atual_1based, total_paginas) -
-    usado pela tela para mostrar uma barra de progresso."""
+    Retorna uma lista de dicts (pode ser vazia, se a chave nao aparecer
+    neste arquivo). Se `progresso_callback` for informado, e' chamado apos
+    cada pagina processada como progresso_callback(pagina_atual_1based, total_paginas)."""
     pad = padrao_busca(chave)
     pad_generico = padrao_generico(chave)
 
     with lock_para(pdf_path):
         textos, total = _carregar_ou_iniciar_cache(pdf_path, cache_dir)
         mudou = False
-        inicio = None
-        fim = None
+        ocorrencias = []
+        inicio_atual = None
 
-        for i in range(total):
+        i = 0
+        while i < total:
             if textos[i] is None:
                 _garantir_pagina_ocr(pdf_path, textos, i, dpi=dpi, lang=lang)
                 mudou = True
@@ -261,29 +261,45 @@ def buscar_no_pdf(pdf_path: Path, cache_dir: Path, chave: str,
                 progresso_callback(i + 1, total)
 
             texto_norm = normalizar(textos[i])
-            if inicio is None:
-                if pad.search(texto_norm):
-                    inicio = i
-            elif pad_generico and len(texto_norm) <= limite_chars_capa and pad_generico.search(texto_norm):
-                fim = i
-                break  # achou a proxima capa - documento termina aqui
+            # so' considera "capa" paginas com pouco texto (titulo + nomes),
+            # nao paginas de conteudo onde a mesma frase tambem aparece
+            parece_capa = len(texto_norm) <= limite_chars_capa
+
+            if inicio_atual is None:
+                if parece_capa and pad.search(texto_norm):
+                    inicio_atual = i
+            else:
+                if parece_capa and pad_generico and pad_generico.search(texto_norm):
+                    # esta pagina fecha o documento atual (fim exclusivo)
+                    ocorrencias.append({
+                        "inicio": inicio_atual,
+                        "fim_sugerido": i,
+                        "total_paginas": total,
+                        "trecho": (textos[inicio_atual] or "").strip().replace("\n", " ")[:180],
+                    })
+                    if max_ocorrencias and len(ocorrencias) >= max_ocorrencias:
+                        inicio_atual = None
+                        break
+                    # a mesma pagina pode ja ser a capa do PROXIMO documento
+                    # (ex: chave sem ano, tipo "folha de pagamento", casando
+                    # com cada capa em sequencia)
+                    inicio_atual = i if pad.search(texto_norm) else None
+
+            i += 1
+
+        # se chegou ao fim do arquivo com um documento ainda "aberto"
+        if inicio_atual is not None:
+            ocorrencias.append({
+                "inicio": inicio_atual,
+                "fim_sugerido": total,
+                "total_paginas": total,
+                "trecho": (textos[inicio_atual] or "").strip().replace("\n", " ")[:180],
+            })
 
         if mudou:
             _persistir_cache(pdf_path, cache_dir, textos)
 
-        if inicio is None:
-            return None
-
-        if fim is None:
-            fim = total
-
-        trecho = (textos[inicio] or "").strip().replace("\n", " ")[:180]
-        return {
-            "inicio": inicio,
-            "fim_sugerido": fim,
-            "total_paginas": total,
-            "trecho": trecho,
-        }
+        return ocorrencias
 
 
 # --------------------------------------------------------------------------
@@ -300,6 +316,21 @@ def extrair_sub_pdf(pdf_path: Path, inicio: int, fim: int, saida_path: Path):
     with open(saida_path, "wb") as f:
         writer.write(f)
     return saida_path
+
+
+def gerar_previa_bytes(pdf_path: Path, inicio: int, fim: int) -> bytes:
+    """Gera os bytes de um PDF so' com as paginas [inicio, fim) (0-based),
+    SEM OCR (so reestrutura o PDF original - rapido mesmo em arquivos
+    grandes). Usado pela previa ao vivo na tela de revisao, mostrada num
+    <iframe> para o usuario rolar/dar zoom com o proprio leitor do
+    navegador, em vez de miniaturas soltas."""
+    reader = PdfReader(str(pdf_path))
+    writer = PdfWriter()
+    for i in range(inicio, fim):
+        writer.add_page(reader.pages[i])
+    buffer = io.BytesIO()
+    writer.write(buffer)
+    return buffer.getvalue()
 
 
 def limpar_buscas_antigas(buscas: dict, ttl_segundos: int = 3600):
