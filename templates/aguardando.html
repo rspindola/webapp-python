@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block titulo %}Buscando "{{ chave }}"...{% endblock %}
+{% block conteudo %}
+
+<div style="display:flex; justify-content:center; padding-top: 50px;">
+  <div class="caixa-progresso">
+    <div class="spinner" id="spinner"></div>
+    <h3 id="titulo" style="font-size:18px; margin-bottom:12px;">Buscando <span style="color:var(--azul);">"{{ chave }}"</span>...</h3>
+    <div class="barra-fundo" style="height:12px;">
+      <div class="barra-preenchida" id="barra-preenchida"></div>
+    </div>
+    <p id="detalhe" style="font-size:13px; color:var(--texto-fraco);">Iniciando varredura e OCR...</p>
+    
+    <div style="margin-top:20px; padding:12px 16px; background:rgba(245,158,11,0.08); border:1px solid rgba(245,158,11,0.25); border-radius:12px;" id="aviso-nao-feche">
+      <p class="aviso-nao-feche" style="margin:0; font-size:12px; color:var(--amarelo); text-align:left;">
+        💡 <strong>Busca assíncrona:</strong> Você pode fechar esta aba se quiser. O processo continuará rodando normalmente no servidor.
+      </p>
+    </div>
+
+    <div id="area-erro" style="display:none; margin-top:20px;">
+      <p id="mensagem-erro" style="color:#fca5a5; font-size:13.5px; margin: 10px 0 18px; background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3); padding:12px; border-radius:10px;"></p>
+      <a class="botao secundario" href="{{ url_for('index') }}" style="margin:0;">← Voltar para nova busca</a>
+    </div>
+  </div>
+</div>
+
+<script>
+const buscaId = "{{ busca_id }}";
+
+async function consultarEstado() {
+  try {
+    const resp = await fetch('/estado/' + buscaId);
+    const dados = await resp.json();
+
+    if (dados.status === 'processando') {
+      const p = dados.progresso;
+      if (p && p.total) {
+        const pct = Math.min(100, Math.round((p.pagina / p.total) * 100));
+        document.getElementById('barra-preenchida').style.width = pct + '%';
+        document.getElementById('titulo').textContent = 'Buscando... ' + pct + '%';
+        document.getElementById('detalhe').textContent = (p.arquivo || '') + ' — página ' + p.pagina + ' de ' + p.total;
+      }
+      setTimeout(consultarEstado, 700);
+    } else if (dados.status === 'pronto') {
+      document.getElementById('titulo').textContent = '✅ Encontrado!';
+      window.location.href = '/resultados/' + buscaId;
+    } else if (dados.status === 'vazio' || dados.status === 'erro' || dados.status === 'expirada') {
+      document.getElementById('spinner').style.display = 'none';
+      document.querySelector('.barra-fundo').style.display = 'none';
+      document.getElementById('aviso-nao-feche').style.display = 'none';
+      document.getElementById('titulo').textContent = dados.status === 'erro' ? '❌ Erro na busca' : '🔍 Nada encontrado';
+      document.getElementById('detalhe').style.display = 'none';
+      document.getElementById('area-erro').style.display = 'block';
+      document.getElementById('mensagem-erro').textContent = dados.mensagem || 'Busca expirada.';
+    } else {
+      setTimeout(consultarEstado, 700);
+    }
+  } catch (e) {
+    // falha pontual de rede no polling - tenta de novo
+    setTimeout(consultarEstado, 1500);
+  }
+}
+consultarEstado();
+</script>
+{% endblock %}

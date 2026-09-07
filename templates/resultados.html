@@ -1,22 +1,52 @@
 {% extends "base.html" %}
-{% block titulo %}Resultados{% endblock %}
+{% block titulo %}Resultados — {{ chave }}{% endblock %}
 {% block conteudo %}
-<h1>Resultados para "{{ chave }}"</h1>
-<p>{{ resultados|length }} ocorrência(s) encontrada(s). Escolha a correta para revisar e extrair:</p>
+
+<a class="botao-voltar" href="{{ url_for('index') }}">
+  ← Nova busca
+</a>
+
+<div class="cabecalho" style="margin-bottom:24px;">
+  <div class="logo">🎯</div>
+  <div class="titulo-area">
+    <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:4px;">
+      <h1 style="font-size:24px; margin:0;">Resultados para <span class="destaque">"{{ chave }}"</span></h1>
+      <span class="badge badge-verde">✨ {{ resultados|length }} ocorrência(s)</span>
+    </div>
+    <div class="subtitulo">Selecione o documento desejado abaixo para conferir as páginas e realizar a extração.</div>
+  </div>
+</div>
 
 {% if limite_atingido %}
-<div class="flash">⚠️ Mostrando as primeiras {{ resultados|length }} ocorrências — pode haver mais na
-pasta. Se souber que existem mais, tente refinar a palavra-chave (ex: incluir o mês/ano) para
-resultados mais precisos.</div>
+<div class="flash">
+  ⚠️ <strong>Limite atingido:</strong> Mostrando as primeiras {{ resultados|length }} ocorrências. Se souber que existem mais, tente refinar o termo de busca (ex: incluindo mês ou ano).
+</div>
 {% endif %}
 
-{% for r in resultados %}
-<div class="cartao">
-  <h2>{{ r.pdf_nome }} — página {{ r.inicio + 1 }} de {{ r.total_paginas }}</h2>
-  <p class="trecho">"{{ r.trecho }}..."</p>
-  <a class="botao" href="{{ url_for('revisar', busca_id=busca_id, indice=loop.index0) }}">Revisar e extrair →</a>
-</div>
-{% endfor %}
+<div style="display:flex; flex-direction:column; gap:16px;">
+  {% for r in resultados %}
+  <div class="painel" style="padding:22px;">
+    <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px; margin-bottom:12px;">
+      <div style="display:flex; align-items:center; gap:10px;">
+        <span style="font-size:20px;">📄</span>
+        <h2 style="margin:0; font-size:17px; font-weight:700;">{{ r.pdf_nome }}</h2>
+      </div>
+      <div style="display:flex; gap:8px;">
+        <span class="badge badge-roxo">Página {{ r.inicio + 1 }} de {{ r.total_paginas }}</span>
+      </div>
+    </div>
 
-<a class="botao secundario" href="{{ url_for('index') }}">← Nova busca</a>
+    <div class="trecho">
+      "{{ r.trecho }}"
+    </div>
+
+    <div style="display:flex; justify-content:flex-end; margin-top:14px;">
+      <a class="botao" style="width:auto; margin:0; padding:10px 20px; font-size:13.5px;" href="{{ url_for('revisar', busca_id=busca_id, indice=loop.index0) }}">
+        ✂️ Revisar e extrair →
+      </a>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
 {% endblock %}

@@ -26,6 +26,16 @@ except ImportError:
     OCR_DISPONIVEL = False
 
 
+# Limite de quantas paginas podem ser OCR-adas AO MESMO TEMPO no servidor
+# inteiro (buscas interativas + sincronizacao em segundo plano, tudo
+# compartilha o mesmo limite). Cada OCR chama processos externos (Poppler +
+# Tesseract) que consomem CPU/memoria; sem esse limite, varias buscas ou uma
+# sincronizacao grande rodando junto podem sobrecarregar o servidor (ou o
+# Docker Desktop/WSL2 no Windows) a ponto de travar a maquina inteira.
+# Ajustavel via variavel de ambiente OCR_CONCORRENTE (padrao: 2).
+_OCR_SEMAFORO = threading.Semaphore(int(os.environ.get("OCR_CONCORRENTE", "2")))
+
+
 # --------------------------------------------------------------------------
 # Traducao de caminhos Windows -> caminho dentro do container Docker
 # --------------------------------------------------------------------------
@@ -184,7 +194,11 @@ def _persistir_cache(pdf_path: Path, cache_dir: Path, textos):
 
 def _garantir_pagina_ocr(pdf_path: Path, textos: list, indice: int,
                           dpi: int = 150, lang: str = "por"):
-    """OCR-a a pagina `indice` se ainda nao tiver texto (in-place em `textos`)."""
+    """OCR-a a pagina `indice` se ainda nao tiver texto (in-place em `textos`).
+
+    Passa pelo _OCR_SEMAFORO: se ja tiver muitas paginas sendo OCR-adas ao
+    mesmo tempo (por outras buscas ou pela sincronizacao), esta chamada
+    espera a vez em vez de somar mais carga no servidor."""
     if textos[indice] is not None:
         return
     if not OCR_DISPONIVEL:
@@ -192,14 +206,16 @@ def _garantir_pagina_ocr(pdf_path: Path, textos: list, indice: int,
             "Este PDF e escaneado (sem texto) mas pytesseract/pdf2image nao "
             "estao instalados. Veja o README para instalar o Tesseract."
         )
-    imgs = convert_from_path(str(pdf_path), dpi=dpi, first_page=indice + 1, last_page=indice + 1)
-    textos[indice] = pytesseract.image_to_string(imgs[0], lang=lang)
+    with _OCR_SEMAFORO:
+        imgs = convert_from_path(str(pdf_path), dpi=dpi, first_page=indice + 1, last_page=indice + 1)
+        textos[indice] = pytesseract.image_to_string(imgs[0], lang=lang)
 
 
-def extrair_texto_paginas(pdf_path: Path, cache_dir: Path, dpi: int = 150, lang: str = "por"):
+def extrair_texto_paginas(pdf_path: Path, cache_dir: Path, dpi: int = 150, lang: str = "por",
+                           progresso_callback=None):
     """Forca o OCR/leitura de TODAS as paginas e retorna a lista completa de
-    textos. Mantido para compatibilidade/uso pontual - a busca normal usa
-    `buscar_ocorrencias_no_pdf`, que e' mais rapida por poder parar mais cedo."""
+    textos. Usado pela busca antiga (mantido por compatibilidade) e pela
+    sincronizacao de cache em segundo plano (ver app.py)."""
     with lock_para(pdf_path):
         textos, total = _carregar_ou_iniciar_cache(pdf_path, cache_dir)
         mudou = False
@@ -207,9 +223,29 @@ def extrair_texto_paginas(pdf_path: Path, cache_dir: Path, dpi: int = 150, lang:
             if textos[i] is None:
                 _garantir_pagina_ocr(pdf_path, textos, i, dpi=dpi, lang=lang)
                 mudou = True
+            if progresso_callback:
+                progresso_callback(i + 1, total)
+            if mudou and (i + 1) % 10 == 0:
+                # salva a cada 10 paginas (nao so no final) - se o processo for
+                # interrompido no meio de um arquivo grande, nao perde tudo
+                _persistir_cache(pdf_path, cache_dir, textos)
         if mudou:
             _persistir_cache(pdf_path, cache_dir, textos)
         return textos
+
+
+def cache_completo(pdf_path: Path, cache_dir: Path) -> bool:
+    """Checa (rapido, so' le o JSON do cache) se este PDF ja esta 100%
+    processado - usado pela sincronizacao pra pular arquivos que ja estao
+    prontos, sem precisar reabrir o PDF."""
+    cache_file = _cache_path(pdf_path, cache_dir)
+    if not cache_file.exists():
+        return False
+    try:
+        textos = json.loads(cache_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return all(t is not None for t in textos)
 
 
 def chave_cache_imagem(pdf_path: Path, pagina: int) -> str:

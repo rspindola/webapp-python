@@ -1,10 +1,29 @@
 {% extends "base.html" %}
-{% block titulo %}Concluído{% endblock %}
+{% block titulo %}PDF Extraído com Sucesso{% endblock %}
 {% block conteudo %}
-<h1>✅ PDF extraído com sucesso</h1>
-<div class="cartao">
-  <p>{{ n_paginas }} página(s) salvas em:</p>
-  <p><code>{{ caminho }}</code></p>
+
+<div style="display:flex; justify-content:center; padding-top:40px;">
+  <div class="painel" style="width:540px; text-align:center; background: linear-gradient(180deg, rgba(16, 185, 129, 0.12) 0%, rgba(12, 17, 30, 0.95) 100%); border-color: rgba(16, 185, 129, 0.4);">
+    <div style="width:64px; height:64px; border-radius:50%; background:rgba(16,185,129,0.2); border:1px solid rgba(16,185,129,0.5); display:flex; align-items:center; justify-content:center; font-size:32px; margin:0 auto 20px; box-shadow:0 0 30px rgba(16,185,129,0.3);">
+      🎉
+    </div>
+
+    <h1 style="font-size:24px; margin:0 0 8px;">PDF extraído com sucesso!</h1>
+    <p style="color:var(--texto-fraco); font-size:14px; margin:0 0 24px;">
+      O documento contendo <strong>{{ n_paginas }} página(s)</strong> foi gerado e salvo.
+    </p>
+
+    <div style="background:#080d19; border:1px solid var(--borda); border-radius:12px; padding:16px; text-align:left; margin-bottom:24px;">
+      <span style="font-size:12px; font-weight:600; color:var(--texto-fraco); display:block; margin-bottom:6px;">
+        📁 Local de salvamento:
+      </span>
+      <code>{{ caminho }}</code>
+    </div>
+
+    <a class="botao sucesso" href="{{ url_for('index') }}" style="margin:0;">
+      🔍 Fazer nova busca
+    </a>
+  </div>
 </div>
-<a class="botao" href="{{ url_for('index') }}">Fazer nova busca</a>
+
 {% endblock %}

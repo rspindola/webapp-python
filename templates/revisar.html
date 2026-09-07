@@ -1,50 +1,87 @@
 {% extends "base.html" %}
-{% block titulo %}Revisar{% endblock %}
+{% block titulo %}Revisar — {{ pdf_nome }}{% endblock %}
 {% block conteudo %}
-<h1>Revisar intervalo — {{ pdf_nome }}</h1>
-<p>Role o PDF abaixo pra conferir se começa e termina no lugar certo. Ajuste os números
-se precisar e clique em "Atualizar prévia" (o PDF é remontado na hora, sem OCR).</p>
 
-<form method="get" action="{{ url_for('revisar', busca_id=busca_id, indice=indice) }}">
-  <div class="colunas">
-    <div class="coluna">
-      <label>Página inicial</label>
-      <div class="controles">
-        <input type="number" name="inicio" min="1" max="{{ total_paginas }}" value="{{ inicio }}">
-      </div>
+<a class="botao-voltar" href="{{ url_for('resultados', busca_id=busca_id) }}">
+  ← Voltar aos resultados
+</a>
+
+<div class="cabecalho" style="margin-bottom:20px;">
+  <div class="logo">✂️</div>
+  <div class="titulo-area">
+    <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:4px;">
+      <h1 style="font-size:24px; margin:0;">Revisar intervalo</h1>
+      <span class="badge badge-roxo">📄 {{ pdf_nome }}</span>
     </div>
-    <div class="coluna">
-      <label>Última página incluída</label>
-      <div class="controles">
-        <input type="number" name="fim" min="{{ inicio }}" max="{{ total_paginas }}" value="{{ fim }}">
-      </div>
-    </div>
+    <div class="subtitulo">Confira a prévia abaixo para garantir que o corte inclua exatamente o documento desejado.</div>
   </div>
-  <button type="submit" class="secundario">🔄 Atualizar prévia</button>
-</form>
-
-<div class="cartao" style="margin-top:22px; padding:0; overflow:hidden;">
-  <iframe
-    src="{{ url_for('previa_pdf', busca_id=busca_id, indice=indice, inicio=inicio, fim=fim) }}"
-    style="width:100%; height:75vh; border:0; display:block; background:#f1f5f9;">
-  </iframe>
 </div>
 
-{% if fim < total_paginas %}
-<p class="trecho" style="margin-top:10px;">
-  💡 Pra conferir rapidamente se a próxima página (a {{ fim + 1 }}, que NÃO entra nesse PDF)
-  já é outro documento, <a href="{{ url_for('pagina_png', busca_id=busca_id, indice=indice, pagina=fim + 1) }}" target="_blank">clique aqui para abri-la</a>.
-</p>
-{% endif %}
+<div class="painel" style="margin-bottom:24px;">
+  <div class="painel-titulo" style="margin-bottom:18px;">
+    <div class="painel-icone">⚙️</div>
+    <div>
+      <h2>Ajustar intervalo de páginas</h2>
+      <p>Altere a página inicial ou final se necessário e atualize a prévia</p>
+    </div>
+  </div>
 
-<div class="cartao" style="margin-top:16px;">
-  <p><strong>{{ n_paginas }}</strong> página(s) serão extraídas ({{ inicio }} a {{ fim }}) para um novo PDF.</p>
-  <form method="post" action="{{ url_for('confirmar', busca_id=busca_id, indice=indice) }}">
-    <input type="hidden" name="inicio" value="{{ inicio }}">
-    <input type="hidden" name="fim" value="{{ fim }}">
-    <button type="submit">✅ Confirmar e salvar PDF</button>
+  <form method="get" action="{{ url_for('revisar', busca_id=busca_id, indice=indice) }}">
+    <div class="colunas" style="align-items:end;">
+      <div class="coluna">
+        <label>Página inicial</label>
+        <input type="number" name="inicio" min="1" max="{{ total_paginas }}" value="{{ inicio }}" required style="font-size:15px; font-weight:700;">
+      </div>
+      <div class="coluna">
+        <label>Última página incluída</label>
+        <input type="number" name="fim" min="{{ inicio }}" max="{{ total_paginas }}" value="{{ fim }}" required style="font-size:15px; font-weight:700;">
+      </div>
+    </div>
+
+    <div style="display:flex; gap:12px; align-items:center; margin-top:20px; flex-wrap:wrap;">
+      <button type="submit" class="secundario" style="margin:0; flex:1; min-width:200px;">
+        🔄 Atualizar prévia
+      </button>
+      <div class="badge badge-verde" style="padding:10px 16px; font-size:13px;">
+        📊 <strong>{{ n_paginas }}</strong> página(s) selecionada(s) ({{ inicio }} até {{ fim }})
+      </div>
+    </div>
   </form>
 </div>
 
-<a class="botao secundario" href="{{ url_for('resultados', busca_id=busca_id) }}">← Voltar aos resultados</a>
+<div class="painel" style="padding:0; overflow:hidden; margin-bottom:24px; border-color:var(--borda);">
+  <div style="padding:14px 20px; background:rgba(255,255,255,0.03); border-bottom:1px solid var(--borda); display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+    <span style="font-size:13.5px; font-weight:600; color:var(--texto-fraco); display:flex; align-items:center; gap:8px;">
+      👁️ Prévia do PDF remontado
+    </span>
+    {% if fim < total_paginas %}
+    <a href="{{ url_for('pagina_png', busca_id=busca_id, indice=indice, pagina=fim + 1) }}" target="_blank" style="font-size:12.5px; color:var(--azul); text-decoration:none; display:inline-flex; align-items:center; gap:4px;">
+      🔍 Ver próxima página (pág {{ fim + 1 }}) em nova aba ↗
+    </a>
+    {% endif %}
+  </div>
+  <iframe
+    src="{{ url_for('previa_pdf', busca_id=busca_id, indice=indice, inicio=inicio, fim=fim) }}"
+    style="width:100%; height:72vh; border:0; display:block; background:#0e1422;">
+  </iframe>
+</div>
+
+<div class="painel" style="background: linear-gradient(135deg, rgba(16, 185, 129, 0.1) 0%, rgba(12, 17, 30, 0.95) 100%); border-color: rgba(16, 185, 129, 0.35);">
+  <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:16px;">
+    <div>
+      <h3 style="margin:0 0 4px; font-size:17px; font-weight:700;">Pronto para extrair?</h3>
+      <p style="margin:0; font-size:13px; color:var(--texto-fraco);">
+        Um novo arquivo PDF contendo as <strong>{{ n_paginas }} página(s)</strong> (de {{ inicio }} a {{ fim }}) será gerado e salvo na pasta de saída.
+      </p>
+    </div>
+    <form method="post" action="{{ url_for('confirmar', busca_id=busca_id, indice=indice) }}" style="margin:0;">
+      <input type="hidden" name="inicio" value="{{ inicio }}">
+      <input type="hidden" name="fim" value="{{ fim }}">
+      <button type="submit" class="sucesso" style="margin:0; padding:14px 28px; font-size:15px; width:auto;">
+        ✅ Confirmar e salvar PDF
+      </button>
+    </form>
+  </div>
+</div>
+
 {% endblock %}

@@ -1,4 +1,4 @@
-﻿import io
+import io
 import os
 import threading
 import time
@@ -26,9 +26,77 @@ app.secret_key = os.environ.get("SECRET_KEY", "troque-esta-chave-em-producao")
 BUSCAS = {}
 BUSCAS_LOCK = threading.Lock()
 
+def carregar_env():
+    """Carrega variaveis de ambiente do arquivo .env se existir (no host ou container)."""
+    candidatos = [
+        Path(__file__).parent / ".env",
+        Path.cwd() / ".env",
+    ]
+    for env_path in candidatos:
+        if env_path.is_file():
+            try:
+                with open(env_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith("#") and "=" in line:
+                            k, v = line.split("=", 1)
+                            k = k.strip()
+                            v = v.strip().strip("'\"")
+                            if k:
+                                os.environ[k] = v
+            except Exception:
+                pass
+            break
+
+carregar_env()
+
+
+def obter_pasta_padrao_entrada():
+    """Resolve a pasta de entrada padrao a partir do .env, ambiente ou fallbacks."""
+    for c in ["PASTA_ENTRADA", "ENTRADA_PDF", "ENTRADA_HOST"]:
+        val = os.environ.get(c, "").strip()
+        if val:
+            return val
+
+    for candidato in ["/dados/entrada", "./dados/entrada"]:
+        if Path(candidato).exists():
+            return candidato
+
+    data_roots = [r.strip() for r in os.environ.get("DATA_ROOTS", "").split(";") if r.strip()]
+    if data_roots:
+        return data_roots[0]
+
+    return "./dados/entrada"
+
+
+def obter_pasta_padrao_saida():
+    """Resolve a pasta de saida padrao a partir do .env, ambiente ou fallbacks."""
+    for c in ["PASTA_SAIDA", "SAIDA_PDF", "SAIDA_HOST"]:
+        val = os.environ.get(c, "").strip()
+        if val:
+            return val
+
+    for candidato in ["/dados/saida", "./dados/saida"]:
+        if Path(candidato).exists():
+            return candidato
+
+    data_roots = [r.strip() for r in os.environ.get("DATA_ROOTS", "").split(";") if r.strip()]
+    if len(data_roots) > 1:
+        return data_roots[1]
+    elif data_roots:
+        return data_roots[0]
+
+    return "./dados/saida"
+
 # Pasta temporaria onde renderizamos as miniaturas das paginas para previa
 CACHE_IMG = Path(__file__).parent / "static" / "paginas"
 CACHE_IMG.mkdir(parents=True, exist_ok=True)
+
+# Estado da sincronizacao de cache em segundo plano (ver executar_sincronizacao).
+# So' uma sincronizacao roda por vez (protegido por SINCRONIZACAO_LOCK) - clicar
+# de novo enquanto ja esta rodando so' mostra o progresso atual, nao inicia outra.
+SINCRONIZACAO = {"rodando": False}
+SINCRONIZACAO_LOCK = threading.Lock()
 
 
 # Limite de seguranca: quantas ocorrencias no maximo uma busca traz. Sem
@@ -100,9 +168,93 @@ def executar_busca(busca_id, pdfs, cache_dir, chave):
                           mensagem=f"Nenhuma ocorrencia de \"{chave}\" encontrada.")
 
 
+def executar_sincronizacao(pasta_entrada, cache_dir):
+    """Roda em segundo plano: passa por TODOS os PDFs da pasta e faz o OCR
+    completo de cada um (pulando os que ja estao 100% em cache), preenchendo
+    o cache com calma ANTES de alguem precisar buscar. Como usa o mesmo
+    _OCR_SEMAFORO das buscas normais (ver nucleo.py), nunca soma carga demais
+    no servidor - se OCR_CONCORRENTE=2, no maximo 2 paginas sao processadas
+    ao mesmo tempo, seja essa sincronizacao ou uma busca de usuario rodando
+    junto."""
+    try:
+        pdfs = nucleo.listar_pdfs(pasta_entrada)
+        pendentes = [p for p in pdfs if not nucleo.cache_completo(p, cache_dir)]
+
+        with SINCRONIZACAO_LOCK:
+            SINCRONIZACAO.update({
+                "rodando": True, "pasta": str(pasta_entrada),
+                "total_arquivos": len(pdfs), "ja_prontos": len(pdfs) - len(pendentes),
+                "processados": 0, "arquivo_atual": None,
+                "pagina_atual": 0, "pagina_total": 0, "erro": None,
+            })
+
+        def progresso(pagina_atual, pagina_total):
+            with SINCRONIZACAO_LOCK:
+                SINCRONIZACAO["pagina_atual"] = pagina_atual
+                SINCRONIZACAO["pagina_total"] = pagina_total
+
+        for pdf_path in pendentes:
+            with SINCRONIZACAO_LOCK:
+                if not SINCRONIZACAO["rodando"]:
+                    break  # cancelado (ver /sincronizar/cancelar)
+                SINCRONIZACAO["arquivo_atual"] = pdf_path.name
+            try:
+                nucleo.extrair_texto_paginas(pdf_path, cache_dir, progresso_callback=progresso)
+            except RuntimeError as e:
+                with SINCRONIZACAO_LOCK:
+                    SINCRONIZACAO["erro"] = f"{pdf_path.name}: {e}"
+                continue
+            with SINCRONIZACAO_LOCK:
+                SINCRONIZACAO["processados"] += 1
+    finally:
+        with SINCRONIZACAO_LOCK:
+            SINCRONIZACAO["rodando"] = False
+            SINCRONIZACAO["arquivo_atual"] = None
+
+
 @app.route("/", methods=["GET"])
 def index():
-    return render_template("index.html")
+    entrada_padrao = obter_pasta_padrao_entrada()
+    saida_padrao = obter_pasta_padrao_saida()
+    return render_template("index.html", entrada_padrao=entrada_padrao, saida_padrao=saida_padrao)
+
+
+@app.route("/sincronizar", methods=["POST"])
+def sincronizar():
+    entrada_bruta = request.form["pasta_entrada"].strip()
+    try:
+        pasta_entrada = nucleo.validar_caminho(entrada_bruta)
+    except nucleo.CaminhoNaoPermitido as e:
+        flash(str(e))
+        return redirect(url_for("index"))
+    if not pasta_entrada.is_dir():
+        flash(f"Pasta nao encontrada: {pasta_entrada}")
+        return redirect(url_for("index"))
+
+    with SINCRONIZACAO_LOCK:
+        ja_rodando = SINCRONIZACAO.get("rodando")
+    if not ja_rodando:
+        cache_dir = pasta_entrada / ".ocr_cache"
+        thread = threading.Thread(
+            target=executar_sincronizacao, args=(pasta_entrada, cache_dir), daemon=True
+        )
+        thread.start()
+
+    flash("Sincronizacao iniciada/em andamento - acompanhe o progresso na tela inicial.")
+    return redirect(url_for("index"))
+
+
+@app.route("/sincronizar/cancelar", methods=["POST"])
+def sincronizar_cancelar():
+    with SINCRONIZACAO_LOCK:
+        SINCRONIZACAO["rodando"] = False
+    return redirect(url_for("index"))
+
+
+@app.route("/sincronizar/estado")
+def sincronizar_estado():
+    with SINCRONIZACAO_LOCK:
+        return jsonify(dict(SINCRONIZACAO))
 
 
 @app.route("/buscar", methods=["POST"])

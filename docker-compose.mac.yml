@@ -24,5 +24,6 @@ services:
       - SECRET_KEY=${SECRET_KEY:-teste123}
       # Caminho DENTRO do container (bate com os volumes acima)
       - DATA_ROOTS=/dados
-      - ENTRADA_PDF=${ENTRADA_PDF:-}
-      - SAIDA_PDF=${SAIDA_PDF:-}
+      - OCR_CONCORRENTE=${OCR_CONCORRENTE:-2}
+      - PASTA_ENTRADA=${PASTA_ENTRADA:-${ENTRADA_PDF:-/dados/entrada}}
+      - PASTA_SAIDA=${PASTA_SAIDA:-${SAIDA_PDF:-/dados/saida}}
