@@ -39,6 +39,9 @@ async function consultarEstado() {
         document.getElementById('barra-preenchida').style.width = pct + '%';
         document.getElementById('titulo').textContent = 'Buscando... ' + pct + '%';
         document.getElementById('detalhe').textContent = (p.arquivo || '') + ' — página ' + p.pagina + ' de ' + p.total;
+      } else if (p && p.arquivo) {
+        // Fase inicial: thread esta listando os arquivos da pasta
+        document.getElementById('detalhe').textContent = p.arquivo;
       }
       setTimeout(consultarEstado, 700);
     } else if (dados.status === 'pronto') {
