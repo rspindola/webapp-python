@@ -112,10 +112,16 @@ def _atualizar_busca(busca_id, **campos):
             BUSCAS[busca_id].update(campos)
 
 
-def executar_busca(busca_id, pdfs, cache_dir, chave):
+def executar_busca(busca_id, pasta_entrada, cache_dir, chave):
     """Roda em uma thread separada - NAO tem acesso a` sessao/request do
     Flask (por isso nao pode usar flash() aqui; erros vao direto no dict
     BUSCAS, e a tela de espera os exibe).
+
+    A listagem dos PDFs (nucleo.listar_pdfs) tambem roda AQUI DENTRO, nao no
+    request principal: em pastas de rede com muitos arquivos, so' listar
+    (confirmando que cada arquivo e' PDF de verdade pelo conteudo) pode levar
+    minutos - fazer isso fora da thread prenderia o POST /buscar por esse
+    tempo todo, reabrindo risco de estourar o timeout do servidor.
 
     Procura em TODOS os PDFs da pasta (nao para no primeiro arquivo com
     ocorrencia), ate encontrar MAX_OCORRENCIAS no total ou acabar os
@@ -127,6 +133,12 @@ def executar_busca(busca_id, pdfs, cache_dir, chave):
                 "arquivo": pdf_nome, "pagina": pagina_atual, "total": total_paginas,
             })
         return cb
+
+    pdfs = nucleo.listar_pdfs(pasta_entrada)
+    if not pdfs:
+        _atualizar_busca(busca_id, status="vazio",
+                          mensagem=f"Nenhum PDF encontrado em {pasta_entrada}")
+        return
 
     resultados = []
     erros = []
@@ -142,7 +154,9 @@ def executar_busca(busca_id, pdfs, cache_dir, chave):
                 progresso_callback=progresso_callback(pdf_path.name),
                 max_ocorrencias=restante,
             )
-        except RuntimeError as e:
+        except Exception as e:
+            # mesma logica da sincronizacao: um arquivo com problema (rede,
+            # permissao, corrompido) nao pode travar a busca nos demais.
             erros.append(f"{pdf_path.name}: {e}")
             continue
         for r in ocorrencias:
@@ -177,15 +191,27 @@ def executar_sincronizacao(pasta_entrada, cache_dir):
     ao mesmo tempo, seja essa sincronizacao ou uma busca de usuario rodando
     junto."""
     try:
+        # rodando=True e' setado JA' AQUI, antes de listar os arquivos - em
+        # pastas de rede com muitos itens, so' a listagem (abrindo cada
+        # arquivo pra confirmar que e' PDF de verdade) pode levar minutos.
+        # Sem isso, a tela ficava "parada" sem mostrar nada durante esse
+        # tempo todo, porque o estado ainda dizia rodando=False.
+        with SINCRONIZACAO_LOCK:
+            SINCRONIZACAO.update({
+                "rodando": True, "pasta": str(pasta_entrada), "preparando": True,
+                "total_arquivos": 0, "ja_prontos": 0, "processados": 0,
+                "arquivo_atual": None, "pagina_atual": 0, "pagina_total": 0, "erro": None,
+            })
+
         pdfs = nucleo.listar_pdfs(pasta_entrada)
         pendentes = [p for p in pdfs if not nucleo.cache_completo(p, cache_dir)]
 
         with SINCRONIZACAO_LOCK:
+            if not SINCRONIZACAO["rodando"]:
+                return  # cancelado enquanto ainda estava listando os arquivos
             SINCRONIZACAO.update({
-                "rodando": True, "pasta": str(pasta_entrada),
+                "preparando": False,
                 "total_arquivos": len(pdfs), "ja_prontos": len(pdfs) - len(pendentes),
-                "processados": 0, "arquivo_atual": None,
-                "pagina_atual": 0, "pagina_total": 0, "erro": None,
             })
 
         def progresso(pagina_atual, pagina_total):
@@ -200,7 +226,11 @@ def executar_sincronizacao(pasta_entrada, cache_dir):
                 SINCRONIZACAO["arquivo_atual"] = pdf_path.name
             try:
                 nucleo.extrair_texto_paginas(pdf_path, cache_dir, progresso_callback=progresso)
-            except RuntimeError as e:
+            except Exception as e:
+                # qualquer falha num arquivo especifico (rede instavel,
+                # arquivo corrompido, permissao, etc) NAO pode derrubar a
+                # sincronizacao inteira - registra o erro e segue pros
+                # proximos milhares de arquivos.
                 with SINCRONIZACAO_LOCK:
                     SINCRONIZACAO["erro"] = f"{pdf_path.name}: {e}"
                 continue
@@ -283,14 +313,13 @@ def buscar():
         flash("Digite uma palavra-chave para buscar.")
         return redirect(url_for("index"))
 
+    # NAO chamamos nucleo.listar_pdfs() aqui: em pastas de rede com muitos
+    # arquivos, so' listar (abrindo cada arquivo pra confirmar que e' PDF de
+    # verdade) pode levar minutos - se isso rodasse aqui, o POST inteiro
+    # ficaria preso de novo, reabrindo o risco de estourar o timeout do
+    # servidor. Essa listagem vai para dentro da thread em segundo plano
+    # (ver executar_busca).
     cache_dir = pasta_entrada / ".ocr_cache"
-    pdfs = nucleo.listar_pdfs(pasta_entrada)
-    if not pdfs:
-        flash(f"Nenhum PDF encontrado em {pasta_entrada}")
-        return redirect(url_for("index"))
-
-    # A partir daqui, o trabalho pesado (OCR) vai para uma thread em segundo
-    # plano - a resposta HTTP deste POST volta na hora.
     busca_id = uuid.uuid4().hex[:10]
     with BUSCAS_LOCK:
         BUSCAS[busca_id] = {
@@ -302,7 +331,7 @@ def buscar():
         }
 
     thread = threading.Thread(
-        target=executar_busca, args=(busca_id, pdfs, cache_dir, chave), daemon=True
+        target=executar_busca, args=(busca_id, pasta_entrada, cache_dir, chave), daemon=True
     )
     thread.start()
 
@@ -445,4 +474,3 @@ if __name__ == "__main__":
     # o servidor embutido do Flask nao foi feito pra atender varios usuarios
     # ao mesmo tempo.
     app.run(host="0.0.0.0", port=5000, threaded=True)
-

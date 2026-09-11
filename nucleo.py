@@ -33,7 +33,7 @@ except ImportError:
 # sincronizacao grande rodando junto podem sobrecarregar o servidor (ou o
 # Docker Desktop/WSL2 no Windows) a ponto de travar a maquina inteira.
 # Ajustavel via variavel de ambiente OCR_CONCORRENTE (padrao: 2).
-_OCR_SEMAFORO = threading.Semaphore(int(os.environ.get("OCR_CONCORRENTE", "2")))
+_OCR_SEMAFORO = threading.Semaphore(int(os.environ.get("OCR_CONCORRENTE", "1")))
 
 
 # --------------------------------------------------------------------------
@@ -186,10 +186,35 @@ def _carregar_ou_iniciar_cache(pdf_path: Path, cache_dir: Path):
 
 
 def _persistir_cache(pdf_path: Path, cache_dir: Path, textos):
+    """Salva o cache de forma atomica (escreve em .tmp e renomeia por cima).
+
+    Em pastas de REDE (Windows/SMB), esse renomear as vezes falha com
+    'Acesso negado' de forma passageira (ex: antivirus escaneando o arquivo
+    por uma fracao de segundo, ou outro processo segurando o arquivo por um
+    instante) - tenta de novo algumas vezes antes de desistir, em vez de
+    derrubar a sincronizacao/busca inteira por causa de uma falha momentanea
+    num unico arquivo."""
     cache_file = _cache_path(pdf_path, cache_dir)
     tmp = cache_file.with_suffix(".tmp")
     tmp.write_text(json.dumps(textos, ensure_ascii=False), encoding="utf-8")
-    tmp.replace(cache_file)
+
+    tentativas = 5
+    for i in range(tentativas):
+        try:
+            tmp.replace(cache_file)
+            return
+        except (PermissionError, OSError):
+            if i == tentativas - 1:
+                # esgotou as tentativas - remove o .tmp pra nao deixar lixo
+                # acumulando, e desiste (levanta o erro pra quem chamou
+                # decidir o que fazer, ex: pular este arquivo e seguir pros
+                # outros, em vez de travar tudo)
+                try:
+                    tmp.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                raise
+            time.sleep(0.5 * (i + 1))  # espera um pouco mais a cada tentativa
 
 
 def _garantir_pagina_ocr(pdf_path: Path, textos: list, indice: int,
@@ -390,17 +415,59 @@ def eh_pdf(caminho: Path) -> bool:
         return False
 
 
+def _cache_lista_path(pasta: Path) -> Path:
+    return pasta / ".ocr_cache" / "_lista_pdfs.json"
+
+
 def listar_pdfs(pasta: Path):
-    """Lista todos os PDFs de verdade dentro da pasta (por conteudo, nao so
-    pela extensao .pdf), ignorando subpastas como .ocr_cache."""
+    """Lista todos os PDFs de verdade dentro da pasta, ignorando subpastas
+    como .ocr_cache.
+
+    Duas otimizacoes importantes para pastas de REDE com muitos arquivos
+    (onde abrir cada arquivo tem uma latencia real):
+
+    1) Um arquivo que ja termina em .pdf e' aceito direto pelo nome, sem
+       abrir (checar extensao nao faz I/O nenhum).
+    2) Para os que NAO tem extensao .pdf (comum nesses lotes numerados, ex:
+       '00000520.001'), o resultado da checagem de conteudo fica guardado
+       num arquivo de cache (.ocr_cache/_lista_pdfs.json) - assim, cada
+       arquivo so' precisa ser aberto e conferido UMA VEZ NA VIDA. Da segunda
+       vez em diante (proxima busca, proxima sincronizacao), o resultado ja
+       'e conhecido e nenhum arquivo novo precisa ser aberto pela rede."""
+    cache_lista = _cache_lista_path(pasta)
+    try:
+        conhecidos = json.loads(cache_lista.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        conhecidos = {}
+
     candidatos = sorted(
         p for p in pasta.iterdir()
         if p.is_file() and not p.name.startswith(".")
     )
-    return [p for p in candidatos if eh_pdf(p)]
+
+    pdfs = []
+    mudou = False
+    for p in candidatos:
+        if p.suffix.lower() == ".pdf":
+            pdfs.append(p)
+            continue
+        resultado = conhecidos.get(p.name)
+        if resultado is None:
+            resultado = eh_pdf(p)
+            conhecidos[p.name] = resultado
+            mudou = True
+        if resultado:
+            pdfs.append(p)
+
+    if mudou:
+        cache_lista.parent.mkdir(parents=True, exist_ok=True)
+        tmp = cache_lista.with_suffix(".tmp")
+        tmp.write_text(json.dumps(conhecidos, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(cache_lista)
+
+    return pdfs
 
 
 def nome_arquivo_saida(chave: str, inicio: int, fim: int) -> str:
     base = re.sub(r"[^a-zA-Z0-9_-]+", "_", chave.strip()).strip("_")
     return f"{base}_pag{inicio + 1}-{fim}.pdf"
-

@@ -1,12 +1,14 @@
-{% extends "base.html" %}
-{% block titulo %}Buscar{% endblock %}
-{% block conteudo %}
+{% extends "base.html" %} {% block titulo %}Buscar{% endblock %} {% block
+conteudo %}
 
 <div class="cabecalho">
   <div class="logo">📄</div>
   <div class="titulo-area">
     <h1>Extrator de <span class="destaque">sub-PDFs</span></h1>
-    <div class="subtitulo">Localize rapidamente páginas específicas dentro de grandes documentos PDF utilizando palavras-chave e tecnologia de OCR.</div>
+    <div class="subtitulo">
+      Localize rapidamente páginas específicas dentro de grandes documentos PDF
+      utilizando palavras-chave e tecnologia de OCR.
+    </div>
   </div>
   <div class="selo">PDF + OCR</div>
 </div>
@@ -21,23 +23,44 @@
       </div>
     </div>
 
-    <form method="post" action="{{ url_for('buscar') }}" onsubmit="return iniciarBusca(this)">
+    <form
+      method="post"
+      action="{{ url_for('buscar') }}"
+      onsubmit="return iniciarBusca(this);"
+    >
       <label>Pasta de entrada</label>
       <div class="campo">
         <span class="icone-campo">📁</span>
-        <input type="text" name="pasta_entrada" value="{{ entrada_padrao }}" placeholder="\\192.168.0.x\Cgeral\PDFs ou /dados/entrada" required>
+        <input
+          type="text"
+          name="pasta_entrada"
+          value="{{ entrada_padrao }}"
+          placeholder="\\192.168.0.x\Cgeral\PDFs ou /dados/entrada"
+          required
+        />
       </div>
 
       <label>Pasta de saída</label>
       <div class="campo">
         <span class="icone-campo">💾</span>
-        <input type="text" name="pasta_saida" value="{{ saida_padrao }}" placeholder="\\192.168.0.x\Cgeral\Extraidos ou /dados/saida" required>
+        <input
+          type="text"
+          name="pasta_saida"
+          value="{{ saida_padrao }}"
+          placeholder="\\192.168.0.x\Cgeral\Extraidos ou /dados/saida"
+          required
+        />
       </div>
 
       <label>Palavra-chave</label>
       <div class="campo">
         <span class="icone-campo">🔍</span>
-        <input type="text" name="chave" placeholder='Ex: fluxo de trabalho 2008' required>
+        <input
+          type="text"
+          name="chave"
+          placeholder="Ex: fluxo de trabalho 2008"
+          required
+        />
       </div>
 
       <button type="submit" id="botao-buscar">🔍 Iniciar busca</button>
@@ -45,42 +68,69 @@
   </div>
 
   <div class="painel">
-    <h2 style="margin:0 0 20px; font-size:17px;">Como funciona?</h2>
+    <h2 style="margin: 0 0 20px; font-size: 17px">Como funciona?</h2>
     <div class="passos">
       <div class="passo">
         <div class="n">01</div>
-        <div><h3>Selecione a origem</h3><p>Informe a pasta onde estão armazenados os PDFs grandes.</p></div>
+        <div>
+          <h3>Selecione a origem</h3>
+          <p>Informe a pasta onde estão armazenados os PDFs grandes.</p>
+        </div>
       </div>
       <div class="passo">
         <div class="n">02</div>
-        <div><h3>Informe a palavra</h3><p>Digite o termo ou frase que deseja localizar nos documentos.</p></div>
+        <div>
+          <h3>Informe a palavra</h3>
+          <p>Digite o termo ou frase que deseja localizar nos documentos.</p>
+        </div>
       </div>
       <div class="passo">
         <div class="n">03</div>
-        <div><h3>Processamento</h3><p>O sistema analisa as páginas e identifica onde a palavra aparece.</p></div>
+        <div>
+          <h3>Processamento</h3>
+          <p>
+            O sistema analisa as páginas e identifica onde a palavra aparece.
+          </p>
+        </div>
       </div>
       <div class="passo">
         <div class="n">04</div>
-        <div><h3>Sub-PDF gerado</h3><p>As páginas encontradas são extraídas e salvas na pasta de saída.</p></div>
+        <div>
+          <h3>Sub-PDF gerado</h3>
+          <p>
+            As páginas encontradas são extraídas e salvas na pasta de saída.
+          </p>
+        </div>
       </div>
     </div>
 
     <div class="caixa-info ambar">
       <strong>⚡ OCR automático</strong>
-      <span>Na primeira busca em cada PDF escaneado, o sistema executa OCR nas páginas necessárias em segundo plano. O resultado fica armazenado em cache para acelerar as próximas pesquisas.</span>
+      <span
+        >Na primeira busca em cada PDF escaneado, o sistema executa OCR nas
+        páginas necessárias em segundo plano. O resultado fica armazenado em
+        cache para acelerar as próximas pesquisas.</span
+      >
     </div>
     <div class="caixa-info azul">
-      <span><strong style="display:inline; margin:0;">💡 Dica:</strong> utilize palavras ou frases específicas para obter resultados mais precisos.</span>
+      <span
+        ><strong style="display: inline; margin: 0">💡 Dica:</strong> utilize
+        palavras ou frases específicas para obter resultados mais
+        precisos.</span
+      >
     </div>
   </div>
 </div>
 
-<div class="painel" style="margin-top:22px;">
+<div class="painel" style="margin-top: 22px">
   <div class="painel-titulo">
     <div class="painel-icone">🔄</div>
     <div>
       <h2>Sincronizar cache</h2>
-      <p>Pré-processa os PDFs de uma pasta com calma, ANTES de alguém precisar buscar — evita sobrecarga quando tem muito arquivo ainda sem cache.</p>
+      <p>
+        Pré-processa os PDFs de uma pasta com calma, ANTES de alguém precisar
+        buscar — evita sobrecarga quando tem muito arquivo ainda sem cache.
+      </p>
     </div>
   </div>
 
@@ -88,71 +138,117 @@
     <label>Pasta a sincronizar</label>
     <div class="campo">
       <span class="icone-campo">📁</span>
-      <input type="text" name="pasta_entrada" id="sync-pasta" value="{{ entrada_padrao }}" placeholder="\\192.168.0.x\Cgeral\PDFs ou /dados/entrada" required>
+      <input
+        type="text"
+        name="pasta_entrada"
+        id="sync-pasta"
+        value="{{ entrada_padrao }}"
+        placeholder="\\192.168.0.x\Cgeral\PDFs ou /dados/entrada"
+        required
+      />
     </div>
-    <button type="submit" class="secundario" id="botao-sync" style="margin-top:14px;">▶️ Iniciar sincronização</button>
+    <button
+      type="submit"
+      class="secundario"
+      id="botao-sync"
+      style="margin-top: 14px"
+    >
+      ▶️ Iniciar sincronização
+    </button>
   </form>
 
-  <div id="sync-status" style="display:none; margin-top:18px;">
+  <div id="sync-status" style="display: none; margin-top: 18px">
     <div class="barra-fundo" id="sync-barra-container">
       <div class="barra-preenchida" id="sync-barra"></div>
     </div>
-    <p id="sync-detalhe" style="font-size:12.5px; color:var(--texto-fraco); margin:10px 0 0;"></p>
-    <form method="post" action="{{ url_for('sincronizar_cancelar') }}" id="sync-cancelar-form">
-      <button type="submit" class="secundario" style="margin-top:10px; width:auto; padding:8px 16px; font-size:12.5px;">⏹️ Cancelar</button>
+    <p
+      id="sync-detalhe"
+      style="font-size: 12.5px; color: var(--texto-fraco); margin: 10px 0 0"
+    ></p>
+    <form
+      method="post"
+      action="{{ url_for('sincronizar_cancelar') }}"
+      id="sync-cancelar-form"
+    >
+      <button
+        type="submit"
+        class="secundario"
+        style="
+          margin-top: 10px;
+          width: auto;
+          padding: 8px 16px;
+          font-size: 12.5px;
+        "
+      >
+        ⏹️ Cancelar
+      </button>
     </form>
   </div>
 </div>
 
 <script>
-let buscaEmAndamento = false;
+  let buscaEmAndamento = false;
 
-function iniciarBusca(form) {
-  if (buscaEmAndamento) return false; // trava contra duplo clique/duplo submit
-  buscaEmAndamento = true;
-  document.getElementById('botao-buscar').disabled = true;
-  document.getElementById('botao-buscar').textContent = 'Iniciando...';
-  return true; // deixa o formulario enviar normalmente - o POST volta rapido
-               // e o navegador ja navega pra tela de espera (aguardando.html)
-}
+  function iniciarBusca(form) {
+    if (buscaEmAndamento) return false; // trava contra duplo clique/duplo submit
+    buscaEmAndamento = true;
+    document.getElementById("botao-buscar").disabled = true;
+    document.getElementById("botao-buscar").textContent = "Iniciando...";
+    return true; // deixa o formulario enviar normalmente - o POST volta rapido
+    // e o navegador ja navega pra tela de espera (aguardando.html)
+  }
 
-async function checarSincronizacao() {
-  try {
-    const resp = await fetch('/sincronizar/estado');
-    const s = await resp.json();
-    const status = document.getElementById('sync-status');
-    const barraContainer = document.getElementById('sync-barra-container');
-    const cancelarForm = document.getElementById('sync-cancelar-form');
-    const botaoSync = document.getElementById('botao-sync');
-    if (s.rodando) {
-      status.style.display = 'block';
-      if (barraContainer) barraContainer.style.display = 'block';
-      if (cancelarForm) cancelarForm.style.display = 'block';
-      botaoSync.disabled = true;
-      botaoSync.textContent = '⏳ Sincronizando...';
-      const pct = s.pagina_total ? Math.round((s.pagina_atual / s.pagina_total) * 100) : 0;
-      document.getElementById('sync-barra').style.width = pct + '%';
-      document.getElementById('sync-detalhe').textContent =
-        `Arquivo ${s.processados + 1} de ${s.total_arquivos - s.ja_prontos} pendentes` +
-        (s.arquivo_atual ? ` — ${s.arquivo_atual} (página ${s.pagina_atual} de ${s.pagina_total})` : '') +
-        (s.ja_prontos ? ` · ${s.ja_prontos} já estavam prontos` : '');
-    } else {
-      botaoSync.disabled = false;
-      botaoSync.textContent = '▶️ Iniciar sincronização';
-      if (s.total_arquivos) {
-        status.style.display = 'block';
-        if (barraContainer) barraContainer.style.display = 'none';
-        if (cancelarForm) cancelarForm.style.display = 'none';
-        document.getElementById('sync-detalhe').innerHTML =
-          `<span style="color:var(--verde); font-weight:600;">✅ Concluído:</span> ${s.processados} arquivo(s) processado(s), ${s.ja_prontos} já estavam prontos.` +
-          (s.erro ? ` <span style="color:var(--amarelo);">⚠️ ${s.erro}</span>` : '');
+  async function checarSincronizacao() {
+    try {
+      const resp = await fetch("/sincronizar/estado");
+      const s = await resp.json();
+      const status = document.getElementById("sync-status");
+      const barraContainer = document.getElementById("sync-barra-container");
+      const cancelarForm = document.getElementById("sync-cancelar-form");
+      const botaoSync = document.getElementById("botao-sync");
+      if (s.rodando) {
+        status.style.display = "block";
+        if (barraContainer) barraContainer.style.display = "block";
+        if (cancelarForm) cancelarForm.style.display = "block";
+        botaoSync.disabled = true;
+        botaoSync.textContent = "⏳ Sincronizando...";
+        if (s.preparando) {
+          document.getElementById("sync-barra").style.width = "0%";
+          document.getElementById("sync-detalhe").textContent =
+            "Preparando: localizando e conferindo os arquivos da pasta (pode levar alguns minutos em pastas de rede com muitos itens)...";
+        } else {
+          const pct = s.pagina_total
+            ? Math.round((s.pagina_atual / s.pagina_total) * 100)
+            : 0;
+          document.getElementById("sync-barra").style.width = pct + "%";
+          document.getElementById("sync-detalhe").textContent =
+            `Arquivo ${s.processados + 1} de ${s.total_arquivos - s.ja_prontos} pendentes` +
+            (s.arquivo_atual
+              ? ` — ${s.arquivo_atual} (página ${s.pagina_atual} de ${s.pagina_total})`
+              : "") +
+            (s.ja_prontos ? ` · ${s.ja_prontos} já estavam prontos` : "");
+        }
       } else {
-        status.style.display = 'none';
+        botaoSync.disabled = false;
+        botaoSync.textContent = "▶️ Iniciar sincronização";
+        if (s.total_arquivos) {
+          status.style.display = "block";
+          if (barraContainer) barraContainer.style.display = "none";
+          if (cancelarForm) cancelarForm.style.display = "none";
+          document.getElementById("sync-detalhe").innerHTML =
+            `<span style="color:var(--verde); font-weight:600;">✅ Concluído:</span> ${s.processados} arquivo(s) processado(s), ${s.ja_prontos} já estavam prontos.` +
+            (s.erro
+              ? ` <span style="color:var(--amarelo);">⚠️ ${s.erro}</span>`
+              : "");
+        } else {
+          status.style.display = "none";
+        }
       }
+    } catch (e) {
+      /* ignora falha pontual de rede */
     }
-  } catch (e) { /* ignora falha pontual de rede */ }
-  setTimeout(checarSincronizacao, 1500);
-}
-checarSincronizacao();
+    setTimeout(checarSincronizacao, 1500);
+  }
+  checarSincronizacao();
 </script>
 {% endblock %}
