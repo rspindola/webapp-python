@@ -8,6 +8,7 @@ from pathlib import Path
 from flask import Flask, request, render_template, redirect, url_for, send_file, flash, jsonify, session
 
 import nucleo
+from logger import log
 
 app = Flask(__name__)
 # Em producao, defina SECRET_KEY no .env (qualquer string aleatoria longa).
@@ -95,7 +96,7 @@ CACHE_IMG.mkdir(parents=True, exist_ok=True)
 # Estado da sincronizacao de cache em segundo plano (ver executar_sincronizacao).
 # So' uma sincronizacao roda por vez (protegido por SINCRONIZACAO_LOCK) - clicar
 # de novo enquanto ja esta rodando so' mostra o progresso atual, nao inicia outra.
-SINCRONIZACAO = {"rodando": False}
+SINCRONIZACAO = {"rodando": False, "erros": []}
 SINCRONIZACAO_LOCK = threading.Lock()
 
 
@@ -191,6 +192,9 @@ def executar_sincronizacao(pasta_entrada, cache_dir):
     ao mesmo tempo, seja essa sincronizacao ou uma busca de usuario rodando
     junto."""
     try:
+        log.info("="*60)
+        log.info("SINCRONIZACAO INICIADA: %s", pasta_entrada)
+        log.info("="*60)
         # rodando=True e' setado JA' AQUI, antes de listar os arquivos - em
         # pastas de rede com muitos itens, so' a listagem (abrindo cada
         # arquivo pra confirmar que e' PDF de verdade) pode levar minutos.
@@ -200,14 +204,28 @@ def executar_sincronizacao(pasta_entrada, cache_dir):
             SINCRONIZACAO.update({
                 "rodando": True, "pasta": str(pasta_entrada), "preparando": True,
                 "total_arquivos": 0, "ja_prontos": 0, "processados": 0,
-                "arquivo_atual": None, "pagina_atual": 0, "pagina_total": 0, "erro": None,
+                "arquivo_atual": None, "pagina_atual": 0, "pagina_total": 0,
+                "erro": None, "erros": [],
             })
 
+        log.info("Listando PDFs em %s...", pasta_entrada)
         pdfs = nucleo.listar_pdfs(pasta_entrada)
-        pendentes = [p for p in pdfs if not nucleo.cache_completo(p, cache_dir)]
+        log.info("Total de PDFs encontrados: %d", len(pdfs))
+
+        log.info("Verificando cache de cada PDF...")
+        pendentes = []
+        ja_prontos_nomes = []
+        for p in pdfs:
+            if nucleo.cache_completo(p, cache_dir):
+                ja_prontos_nomes.append(p.name)
+            else:
+                pendentes.append(p)
+        log.info("Resultado: %d ja prontos, %d pendentes de processamento",
+                 len(ja_prontos_nomes), len(pendentes))
 
         with SINCRONIZACAO_LOCK:
             if not SINCRONIZACAO["rodando"]:
+                log.warning("Sincronizacao CANCELADA durante listagem")
                 return  # cancelado enquanto ainda estava listando os arquivos
             SINCRONIZACAO.update({
                 "preparando": False,
@@ -219,23 +237,49 @@ def executar_sincronizacao(pasta_entrada, cache_dir):
                 SINCRONIZACAO["pagina_atual"] = pagina_atual
                 SINCRONIZACAO["pagina_total"] = pagina_total
 
-        for pdf_path in pendentes:
+        erros_acumulados = []
+        for idx, pdf_path in enumerate(pendentes):
             with SINCRONIZACAO_LOCK:
                 if not SINCRONIZACAO["rodando"]:
+                    log.warning("Sincronizacao CANCELADA pelo usuario (apos %d/%d pendentes)",
+                                idx, len(pendentes))
                     break  # cancelado (ver /sincronizar/cancelar)
                 SINCRONIZACAO["arquivo_atual"] = pdf_path.name
             try:
+                log.info("Processando [%d/%d pendentes]: %s",
+                         idx + 1, len(pendentes), pdf_path.name)
                 nucleo.extrair_texto_paginas(pdf_path, cache_dir, progresso_callback=progresso)
             except Exception as e:
                 # qualquer falha num arquivo especifico (rede instavel,
                 # arquivo corrompido, permissao, etc) NAO pode derrubar a
                 # sincronizacao inteira - registra o erro e segue pros
                 # proximos milhares de arquivos.
+                msg_erro = f"{pdf_path.name}: {e}"
+                log.error("ERRO ao processar %s: %s", pdf_path.name, e, exc_info=True)
+                erros_acumulados.append(msg_erro)
                 with SINCRONIZACAO_LOCK:
-                    SINCRONIZACAO["erro"] = f"{pdf_path.name}: {e}"
+                    SINCRONIZACAO["erro"] = msg_erro  # ultimo erro (compatibilidade UI)
+                    SINCRONIZACAO["erros"] = list(erros_acumulados)  # todos os erros
                 continue
             with SINCRONIZACAO_LOCK:
                 SINCRONIZACAO["processados"] += 1
+
+        # Resumo final
+        with SINCRONIZACAO_LOCK:
+            processados_final = SINCRONIZACAO["processados"]
+        log.info("="*60)
+        log.info("SINCRONIZACAO FINALIZADA")
+        log.info("  Pasta: %s", pasta_entrada)
+        log.info("  Total PDFs encontrados: %d", len(pdfs))
+        log.info("  Ja estavam prontos: %d", len(ja_prontos_nomes))
+        log.info("  Pendentes processados: %d", len(pendentes))
+        log.info("  Processados com sucesso: %d", processados_final)
+        log.info("  Erros: %d", len(erros_acumulados))
+        if erros_acumulados:
+            log.info("  Lista de erros:")
+            for err in erros_acumulados:
+                log.info("    - %s", err)
+        log.info("="*60)
     finally:
         with SINCRONIZACAO_LOCK:
             SINCRONIZACAO["rodando"] = False
@@ -284,7 +328,49 @@ def sincronizar_cancelar():
 @app.route("/sincronizar/estado")
 def sincronizar_estado():
     with SINCRONIZACAO_LOCK:
-        return jsonify(dict(SINCRONIZACAO))
+        estado = dict(SINCRONIZACAO)
+        estado["total_erros"] = len(estado.get("erros", []))
+        return jsonify(estado)
+
+
+@app.route("/logs")
+def ver_logs():
+    """Exibe as ultimas linhas do log de sincronizacao no browser,
+    para diagnostico sem precisar acessar o servidor por SSH."""
+    from logger import _resolver_pasta_logs
+    arquivo_log = _resolver_pasta_logs() / "sincronizacao.log"
+    n_linhas = int(request.args.get("n", 200))
+
+    if not arquivo_log.exists():
+        return "<pre>Nenhum log encontrado ainda.</pre>", 200
+
+    try:
+        conteudo = arquivo_log.read_text(encoding="utf-8")
+        linhas = conteudo.splitlines()
+        ultimas = linhas[-n_linhas:] if len(linhas) > n_linhas else linhas
+        texto = "\n".join(ultimas)
+    except OSError as e:
+        texto = f"Erro ao ler log: {e}"
+
+    return f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Logs de Sincronização</title>
+<style>
+body {{ background: #1a1a2e; color: #e0e0e0; font-family: 'Courier New', monospace; font-size: 12.5px; padding: 20px; margin: 0; }}
+pre {{ white-space: pre-wrap; word-wrap: break-word; line-height: 1.6; }}
+h1 {{ color: #64ffda; font-size: 18px; margin-bottom: 8px; }}
+.info {{ color: #888; font-size: 12px; margin-bottom: 16px; }}
+a {{ color: #64ffda; }}
+.WARNING {{ color: #ffd93d; }}
+.ERROR {{ color: #ff6b6b; font-weight: bold; }}
+.INFO {{ color: #a8dadc; }}
+</style>
+</head><body>
+<h1>📋 Logs de Sincronização</h1>
+<p class="info">Arquivo: {arquivo_log} — mostrando últimas {len(ultimas)} de {len(linhas)} linhas
+ · <a href="/logs?n={len(linhas)}">ver tudo</a> · <a href="/">← voltar</a></p>
+<pre>{texto}</pre>
+<script>window.scrollTo(0, document.body.scrollHeight);</script>
+</body></html>""", 200
 
 
 @app.route("/buscar", methods=["POST"])

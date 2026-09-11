@@ -206,6 +206,10 @@ conteudo %}
       const barraContainer = document.getElementById("sync-barra-container");
       const cancelarForm = document.getElementById("sync-cancelar-form");
       const botaoSync = document.getElementById("botao-sync");
+      const totalErros = s.total_erros || 0;
+      const errosHtml = totalErros > 0
+        ? ` <span style="color:var(--amarelo);">⚠️ ${totalErros} erro(s)</span> · <a href="/logs" target="_blank" style="color:var(--azul-claro,#64b5f6); text-decoration:underline; font-size:12px;">ver logs</a>`
+        : '';
       if (s.rodando) {
         status.style.display = "block";
         if (barraContainer) barraContainer.style.display = "block";
@@ -221,12 +225,13 @@ conteudo %}
             ? Math.round((s.pagina_atual / s.pagina_total) * 100)
             : 0;
           document.getElementById("sync-barra").style.width = pct + "%";
-          document.getElementById("sync-detalhe").textContent =
+          document.getElementById("sync-detalhe").innerHTML =
             `Arquivo ${s.processados + 1} de ${s.total_arquivos - s.ja_prontos} pendentes` +
             (s.arquivo_atual
               ? ` — ${s.arquivo_atual} (página ${s.pagina_atual} de ${s.pagina_total})`
               : "") +
-            (s.ja_prontos ? ` · ${s.ja_prontos} já estavam prontos` : "");
+            (s.ja_prontos ? ` · ${s.ja_prontos} já estavam prontos` : "") +
+            errosHtml;
         }
       } else {
         botaoSync.disabled = false;
@@ -237,9 +242,7 @@ conteudo %}
           if (cancelarForm) cancelarForm.style.display = "none";
           document.getElementById("sync-detalhe").innerHTML =
             `<span style="color:var(--verde); font-weight:600;">✅ Concluído:</span> ${s.processados} arquivo(s) processado(s), ${s.ja_prontos} já estavam prontos.` +
-            (s.erro
-              ? ` <span style="color:var(--amarelo);">⚠️ ${s.erro}</span>`
-              : "");
+            errosHtml;
         } else {
           status.style.display = "none";
         }

@@ -1,4 +1,4 @@
-﻿"""
+"""
 Nucleo do sistema: leitura/OCR de PDFs grandes, busca por palavra-chave e
 extracao de um intervalo de paginas para um novo PDF.
 
@@ -13,8 +13,11 @@ import os
 import re
 import threading
 import time
+import traceback
 import unicodedata
 from pathlib import Path
+
+from logger import log
 
 from pypdf import PdfReader, PdfWriter
 
@@ -171,17 +174,29 @@ def _carregar_ou_iniciar_cache(pdf_path: Path, cache_dir: Path):
 
     if cache_file.exists():
         textos = json.loads(cache_file.read_text(encoding="utf-8"))
+        prontas = sum(1 for t in textos if t is not None)
+        pendentes = len(textos) - prontas
+        log.debug("Cache existente para %s: %d paginas (%d prontas, %d pendentes)",
+                  pdf_path.name, len(textos), prontas, pendentes)
         return textos, len(textos)
 
+    log.info("Sem cache para %s — lendo PDF para iniciar cache", pdf_path.name)
     reader = PdfReader(str(pdf_path))
     total = len(reader.pages)
     textos = []
+    nativas = 0
     for page in reader.pages:
         # extrair texto nativo e' rapido (nao precisa de OCR/imagem), entao
         # fazemos isso pra todas as paginas de uma vez. So fica None quando
         # a pagina realmente precisa de OCR (PDF escaneado).
         t = page.extract_text() or ""
-        textos.append(t if len(t.strip()) >= 15 else None)
+        if len(t.strip()) >= 15:
+            textos.append(t)
+            nativas += 1
+        else:
+            textos.append(None)
+    log.info("PDF %s: %d paginas total, %d com texto nativo, %d precisam OCR",
+             pdf_path.name, total, nativas, total - nativas)
     return textos, total
 
 
@@ -241,13 +256,16 @@ def extrair_texto_paginas(pdf_path: Path, cache_dir: Path, dpi: int = 150, lang:
     """Forca o OCR/leitura de TODAS as paginas e retorna a lista completa de
     textos. Usado pela busca antiga (mantido por compatibilidade) e pela
     sincronizacao de cache em segundo plano (ver app.py)."""
+    log.info("extrair_texto_paginas INICIO: %s", pdf_path.name)
     with lock_para(pdf_path):
         textos, total = _carregar_ou_iniciar_cache(pdf_path, cache_dir)
         mudou = False
+        ocr_count = 0
         for i in range(total):
             if textos[i] is None:
                 _garantir_pagina_ocr(pdf_path, textos, i, dpi=dpi, lang=lang)
                 mudou = True
+                ocr_count += 1
             if progresso_callback:
                 progresso_callback(i + 1, total)
             if mudou and (i + 1) % 10 == 0:
@@ -256,6 +274,8 @@ def extrair_texto_paginas(pdf_path: Path, cache_dir: Path, dpi: int = 150, lang:
                 _persistir_cache(pdf_path, cache_dir, textos)
         if mudou:
             _persistir_cache(pdf_path, cache_dir, textos)
+        log.info("extrair_texto_paginas FIM: %s — %d paginas total, %d OCR realizados",
+                 pdf_path.name, total, ocr_count)
         return textos
 
 
@@ -265,12 +285,22 @@ def cache_completo(pdf_path: Path, cache_dir: Path) -> bool:
     prontos, sem precisar reabrir o PDF."""
     cache_file = _cache_path(pdf_path, cache_dir)
     if not cache_file.exists():
+        log.debug("cache_completo: %s — SEM cache (arquivo nao existe)", pdf_path.name)
         return False
     try:
         textos = json.loads(cache_file.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, json.JSONDecodeError) as e:
+        log.warning("cache_completo: %s — erro ao ler cache: %s", pdf_path.name, e)
         return False
-    return all(t is not None for t in textos)
+    total = len(textos)
+    prontas = sum(1 for t in textos if t is not None)
+    completo = prontas == total
+    if not completo:
+        log.debug("cache_completo: %s — INCOMPLETO (%d/%d paginas prontas)",
+                  pdf_path.name, prontas, total)
+    else:
+        log.debug("cache_completo: %s — OK (%d paginas)", pdf_path.name, total)
+    return completo
 
 
 def chave_cache_imagem(pdf_path: Path, pagina: int) -> str:
@@ -410,8 +440,13 @@ def eh_pdf(caminho: Path) -> bool:
     .pdf no nome (ex: '00000520.001' em vez de '00000520.001.pdf')."""
     try:
         with open(caminho, "rb") as f:
-            return f.read(5) == b"%PDF-"
-    except OSError:
+            resultado = f.read(5) == b"%PDF-"
+        if not resultado:
+            log.debug("eh_pdf: %s — NAO e PDF (assinatura ausente)", caminho.name)
+        return resultado
+    except OSError as e:
+        log.warning("eh_pdf: %s — ERRO ao ler arquivo (tratado como nao-PDF): %s",
+                    caminho.name, e)
         return False
 
 
@@ -434,22 +469,36 @@ def listar_pdfs(pasta: Path):
        arquivo so' precisa ser aberto e conferido UMA VEZ NA VIDA. Da segunda
        vez em diante (proxima busca, proxima sincronizacao), o resultado ja
        'e conhecido e nenhum arquivo novo precisa ser aberto pela rede."""
+    log.info("listar_pdfs INICIO: %s", pasta)
     cache_lista = _cache_lista_path(pasta)
     try:
         conhecidos = json.loads(cache_lista.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+        log.debug("listar_pdfs: cache de lista carregado com %d entradas", len(conhecidos))
+    except (OSError, json.JSONDecodeError) as e:
         conhecidos = {}
+        log.debug("listar_pdfs: sem cache de lista (ou erro: %s) — verificando todos", e)
 
-    candidatos = sorted(
-        p for p in pasta.iterdir()
-        if p.is_file() and not p.name.startswith(".")
-    )
+    try:
+        candidatos = sorted(
+            p for p in pasta.iterdir()
+            if p.is_file() and not p.name.startswith(".")
+        )
+    except OSError as e:
+        log.error("listar_pdfs: ERRO ao listar pasta %s: %s", pasta, e)
+        return []
+
+    log.info("listar_pdfs: %d arquivos candidatos encontrados em %s", len(candidatos), pasta)
 
     pdfs = []
+    ignorados_nao_pdf = 0
+    ignorados_erro = 0
+    aceitos_extensao = 0
+    aceitos_conteudo = 0
     mudou = False
     for p in candidatos:
         if p.suffix.lower() == ".pdf":
             pdfs.append(p)
+            aceitos_extensao += 1
             continue
         resultado = conhecidos.get(p.name)
         if resultado is None:
@@ -458,6 +507,9 @@ def listar_pdfs(pasta: Path):
             mudou = True
         if resultado:
             pdfs.append(p)
+            aceitos_conteudo += 1
+        else:
+            ignorados_nao_pdf += 1
 
     if mudou:
         cache_lista.parent.mkdir(parents=True, exist_ok=True)
@@ -465,6 +517,9 @@ def listar_pdfs(pasta: Path):
         tmp.write_text(json.dumps(conhecidos, ensure_ascii=False), encoding="utf-8")
         tmp.replace(cache_lista)
 
+    log.info("listar_pdfs FIM: %d PDFs encontrados (%d por extensao, %d por conteudo), "
+             "%d ignorados (nao-PDF)",
+             len(pdfs), aceitos_extensao, aceitos_conteudo, ignorados_nao_pdf)
     return pdfs
 
 
