@@ -10,6 +10,11 @@ from flask import Flask, request, render_template, redirect, url_for, send_file,
 import nucleo
 from logger import log
 
+# Caso o Tesseract nao seja encontrado automaticamente (nao esta no PATH do
+# Windows), utilize esse caminho apontando direto pro executavel instalado:
+import pytesseract
+pytesseract.pytesseract.tesseract_cmd = r"C:\Users\Tecnico.CORECON-RJ\AppData\Local\Tesseract-OCR\tesseract.exe"
+
 app = Flask(__name__)
 # Em producao, defina SECRET_KEY no .env (qualquer string aleatoria longa).
 # Sem isso os flash messages (avisos) usam uma chave previsivel - baixo risco
@@ -280,6 +285,12 @@ def executar_sincronizacao(pasta_entrada, cache_dir):
             for err in erros_acumulados:
                 log.info("    - %s", err)
         log.info("="*60)
+    except Exception as e:
+        # Rede de seguranca final: qualquer falha FORA do loop por arquivo
+        # (ex: falha ao listar a pasta, erro inesperado) tambem NAO pode
+        # matar a thread silenciosamente - registra no log com o traceback
+        # completo, pra dar pra diagnosticar depois.
+        log.error("SINCRONIZACAO INTERROMPIDA POR ERRO INESPERADO: %s", e, exc_info=True)
     finally:
         with SINCRONIZACAO_LOCK:
             SINCRONIZACAO["rodando"] = False

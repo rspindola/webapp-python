@@ -512,10 +512,19 @@ def listar_pdfs(pasta: Path):
             ignorados_nao_pdf += 1
 
     if mudou:
-        cache_lista.parent.mkdir(parents=True, exist_ok=True)
-        tmp = cache_lista.with_suffix(".tmp")
-        tmp.write_text(json.dumps(conhecidos, ensure_ascii=False), encoding="utf-8")
-        tmp.replace(cache_lista)
+        try:
+            cache_lista.parent.mkdir(parents=True, exist_ok=True)
+            tmp = cache_lista.with_suffix(".tmp")
+            tmp.write_text(json.dumps(conhecidos, ensure_ascii=False), encoding="utf-8")
+            tmp.replace(cache_lista)
+        except OSError as e:
+            # Nao e' grave nao conseguir salvar esse cache (so' significa que
+            # os mesmos arquivos sem extensao .pdf serao reconferidos na
+            # proxima vez) - mas NAO pode derrubar a listagem inteira por
+            # causa disso (ja aconteceu: falha de rede bem nesse momento
+            # travava a sincronizacao inteira sem processar nada).
+            log.warning("listar_pdfs: nao foi possivel salvar cache de lista (%s) - "
+                        "seguindo sem salvar, sem problema", e)
 
     log.info("listar_pdfs FIM: %d PDFs encontrados (%d por extensao, %d por conteudo), "
              "%d ignorados (nao-PDF)",
