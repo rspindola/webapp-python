@@ -63,6 +63,45 @@ conteudo %}
         />
       </div>
 
+      <label>Modo de busca</label>
+      <div style="display: flex; gap: 12px; margin-bottom: 4px;">
+        <label style="
+          display: flex; align-items: center; gap: 8px; margin: 0;
+          padding: 10px 16px; border-radius: 12px; cursor: pointer;
+          background: #080d19; border: 1px solid var(--borda);
+          font-size: 13px; font-weight: 500; color: var(--texto);
+          flex: 1; transition: all .2s ease;
+        " id="label-rapida"
+           onmouseenter="this.style.borderColor='var(--borda-hover)'"
+           onmouseleave="this.style.borderColor=document.getElementById('modo-rapida').checked?'var(--roxo-2)':'var(--borda)'">
+          <input type="radio" name="modo_busca" value="rapida" id="modo-rapida"
+            style="accent-color: var(--roxo-2); width: 16px; height: 16px; cursor: pointer;"
+            onchange="atualizarEstiloModo()">
+          <span>
+            <strong style="display: block; font-size: 13.5px;">⚡ Rápida</strong>
+            <span style="font-size: 11.5px; color: var(--texto-fraco);">Para no primeiro arquivo encontrado</span>
+          </span>
+        </label>
+        <label style="
+          display: flex; align-items: center; gap: 8px; margin: 0;
+          padding: 10px 16px; border-radius: 12px; cursor: pointer;
+          background: #080d19; border: 1px solid var(--roxo-2);
+          font-size: 13px; font-weight: 500; color: var(--texto);
+          flex: 1; transition: all .2s ease;
+          box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+        " id="label-completa"
+           onmouseenter="this.style.borderColor='var(--borda-hover)'"
+           onmouseleave="this.style.borderColor=document.getElementById('modo-completa').checked?'var(--roxo-2)':'var(--borda)'">
+          <input type="radio" name="modo_busca" value="completa" id="modo-completa" checked
+            style="accent-color: var(--roxo-2); width: 16px; height: 16px; cursor: pointer;"
+            onchange="atualizarEstiloModo()">
+          <span>
+            <strong style="display: block; font-size: 13.5px;">🔎 Completa</strong>
+            <span style="font-size: 11.5px; color: var(--texto-fraco);">Varre todos os arquivos da pasta</span>
+          </span>
+        </label>
+      </div>
+
       <button type="submit" id="botao-buscar">🔍 Iniciar busca</button>
     </form>
   </div>
@@ -188,6 +227,25 @@ conteudo %}
 
 <script>
   let buscaEmAndamento = false;
+
+  function atualizarEstiloModo() {
+    const rapida = document.getElementById('modo-rapida');
+    const completa = document.getElementById('modo-completa');
+    const labelRapida = document.getElementById('label-rapida');
+    const labelCompleta = document.getElementById('label-completa');
+
+    if (rapida.checked) {
+      labelRapida.style.borderColor = 'var(--roxo-2)';
+      labelRapida.style.boxShadow = '0 0 0 3px rgba(99, 102, 241, 0.15)';
+      labelCompleta.style.borderColor = 'var(--borda)';
+      labelCompleta.style.boxShadow = 'none';
+    } else {
+      labelCompleta.style.borderColor = 'var(--roxo-2)';
+      labelCompleta.style.boxShadow = '0 0 0 3px rgba(99, 102, 241, 0.15)';
+      labelRapida.style.borderColor = 'var(--borda)';
+      labelRapida.style.boxShadow = 'none';
+    }
+  }
 
   function iniciarBusca(form) {
     if (buscaEmAndamento) return false; // trava contra duplo clique/duplo submit

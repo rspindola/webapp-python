@@ -118,7 +118,7 @@ def _atualizar_busca(busca_id, **campos):
             BUSCAS[busca_id].update(campos)
 
 
-def executar_busca(busca_id, pasta_entrada, cache_dir, chave):
+def executar_busca(busca_id, pasta_entrada, cache_dir, chave, modo_busca="completa"):
     """Roda em uma thread separada - NAO tem acesso a` sessao/request do
     Flask (por isso nao pode usar flash() aqui; erros vao direto no dict
     BUSCAS, e a tela de espera os exibe).
@@ -129,10 +129,10 @@ def executar_busca(busca_id, pasta_entrada, cache_dir, chave):
     minutos - fazer isso fora da thread prenderia o POST /buscar por esse
     tempo todo, reabrindo risco de estourar o timeout do servidor.
 
-    Procura em TODOS os PDFs da pasta (nao para no primeiro arquivo com
-    ocorrencia), ate encontrar MAX_OCORRENCIAS no total ou acabar os
-    arquivos - assim uma chave como "folha de pagamento", que existe em
-    varios meses/anos espalhados em arquivos diferentes, traz todas elas."""
+    Modos de busca:
+    - 'rapida': para no PRIMEIRO arquivo que contiver a chave (mais rapido)
+    - 'completa': varre TODOS os PDFs da pasta ate MAX_OCORRENCIAS (mais
+      resultados, mas pode demorar bastante em pastas grandes)"""
     def progresso_callback(pdf_nome):
         def cb(pagina_atual, total_paginas):
             _atualizar_busca(busca_id, progresso={
@@ -174,13 +174,17 @@ def executar_busca(busca_id, pasta_entrada, cache_dir, chave):
                 "total_paginas": r["total_paginas"],
                 "trecho": r["trecho"],
             })
+        # Busca rapida: para assim que encontrar resultados no primeiro arquivo
+        if modo_busca == "rapida" and resultados:
+            break
         if len(resultados) >= MAX_OCORRENCIAS:
             limite_atingido = True
             break
 
     if resultados:
         _atualizar_busca(busca_id, status="pronto", resultados=resultados,
-                          limite_atingido=limite_atingido)
+                          limite_atingido=limite_atingido,
+                          modo_busca=modo_busca)
     elif erros:
         _atualizar_busca(busca_id, status="erro", mensagem="; ".join(erros))
     else:
@@ -392,6 +396,7 @@ def buscar():
     chave = request.form["chave"].strip()
     entrada_bruta = request.form["pasta_entrada"].strip()
     saida_bruta = request.form["pasta_saida"].strip()
+    modo_busca = request.form.get("modo_busca", "completa").strip()
 
     # Estas validacoes ficam SINCRONAS de proposito (sao rapidas: checar
     # caminho, pasta existir, chave vazia) - dao feedback imediato de erro
@@ -423,12 +428,13 @@ def buscar():
             "status": "processando",
             "chave": chave,
             "pasta_saida": str(pasta_saida),
+            "modo_busca": modo_busca,
             "progresso": {"arquivo": None, "pagina": 0, "total": 0},
             "criada_em": time.time(),
         }
 
     thread = threading.Thread(
-        target=executar_busca, args=(busca_id, pasta_entrada, cache_dir, chave), daemon=True
+        target=executar_busca, args=(busca_id, pasta_entrada, cache_dir, chave, modo_busca), daemon=True
     )
     thread.start()
 

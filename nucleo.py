@@ -125,10 +125,16 @@ def lock_para(caminho: Path) -> threading.Lock:
 # --------------------------------------------------------------------------
 
 def normalizar(texto: str) -> str:
-    """minusculas, sem acento, espacos colapsados."""
+    """minusculas, sem acento, sem caracteres especiais, espacos colapsados.
+
+    Remove caracteres como ( ) [ ] { } - / . , ; : que o OCR produz de forma
+    inconsistente (ex: as vezes coloca parenteses, as vezes nao), causando
+    falhas de match entre a chave digitada pelo usuario e o texto reconhecido."""
     texto = texto or ""
     texto = unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode("ascii")
     texto = texto.lower()
+    # Remove caracteres especiais que o OCR produz de forma inconsistente
+    texto = re.sub(r"[()\[\]{}\-/\\.,;:!?@#$%&*+=<>|~^'\"]", " ", texto)
     texto = re.sub(r"\s+", " ", texto).strip()
     return texto
 
@@ -168,7 +174,12 @@ def _cache_path(pdf_path: Path, cache_dir: Path) -> Path:
 def _carregar_ou_iniciar_cache(pdf_path: Path, cache_dir: Path):
     """Retorna (textos, total_paginas). `textos` e uma lista com o texto de
     cada pagina, ou None nas posicoes ainda nao processadas (nem texto
-    nativo nem OCR)."""
+    nativo nem OCR).
+
+    Trata erros de 'Stream has ended unexpectedly' que o pypdf levanta em
+    PDFs com streams truncados ou corrompidos - nesses casos, extrai o
+    texto que der das paginas que funcionam e marca as problematicas como
+    string vazia (em vez de deixar o erro derrubar a busca inteira)."""
     cache_dir.mkdir(exist_ok=True, parents=True)
     cache_file = _cache_path(pdf_path, cache_dir)
 
@@ -181,22 +192,36 @@ def _carregar_ou_iniciar_cache(pdf_path: Path, cache_dir: Path):
         return textos, len(textos)
 
     log.info("Sem cache para %s — lendo PDF para iniciar cache", pdf_path.name)
-    reader = PdfReader(str(pdf_path))
+    try:
+        reader = PdfReader(str(pdf_path), strict=False)
+    except Exception as e:
+        log.error("Erro ao abrir PDF %s: %s — tratando como vazio", pdf_path.name, e)
+        return [], 0
     total = len(reader.pages)
     textos = []
     nativas = 0
-    for page in reader.pages:
+    erros_pagina = 0
+    for idx, page in enumerate(reader.pages):
         # extrair texto nativo e' rapido (nao precisa de OCR/imagem), entao
         # fazemos isso pra todas as paginas de uma vez. So fica None quando
         # a pagina realmente precisa de OCR (PDF escaneado).
-        t = page.extract_text() or ""
+        try:
+            t = page.extract_text() or ""
+        except Exception as e:
+            # "Stream has ended unexpectedly" e outros erros de streams
+            # corrompidos: marca a pagina como vazia em vez de derrubar tudo
+            log.warning("Erro ao extrair texto da pagina %d de %s: %s",
+                        idx + 1, pdf_path.name, e)
+            t = ""
+            erros_pagina += 1
         if len(t.strip()) >= 15:
             textos.append(t)
             nativas += 1
         else:
             textos.append(None)
-    log.info("PDF %s: %d paginas total, %d com texto nativo, %d precisam OCR",
-             pdf_path.name, total, nativas, total - nativas)
+    log.info("PDF %s: %d paginas total, %d com texto nativo, %d precisam OCR%s",
+             pdf_path.name, total, nativas, total - nativas,
+             f", {erros_pagina} com erro de stream" if erros_pagina else "")
     return textos, total
 
 
@@ -338,6 +363,8 @@ def buscar_ocorrencias_no_pdf(pdf_path: Path, cache_dir: Path, chave: str,
 
     with lock_para(pdf_path):
         textos, total = _carregar_ou_iniciar_cache(pdf_path, cache_dir)
+        if total == 0:
+            return []
         mudou = False
         ocorrencias = []
         inicio_atual = None
@@ -345,7 +372,12 @@ def buscar_ocorrencias_no_pdf(pdf_path: Path, cache_dir: Path, chave: str,
         i = 0
         while i < total:
             if textos[i] is None:
-                _garantir_pagina_ocr(pdf_path, textos, i, dpi=dpi, lang=lang)
+                try:
+                    _garantir_pagina_ocr(pdf_path, textos, i, dpi=dpi, lang=lang)
+                except Exception as e:
+                    log.warning("Erro ao OCR pagina %d de %s: %s — pulando",
+                                i + 1, pdf_path.name, e)
+                    textos[i] = ""  # marca como vazia pra nao tentar de novo
                 mudou = True
 
             if progresso_callback:
